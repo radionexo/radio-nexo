@@ -97,7 +97,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
   };
 
   // Stream URL from Render or custom environment
-  const LIVE_STREAM_URL = process.env.NEXT_PUBLIC_STREAM_URL || 'https://nexo-radio-bridge.onrender.com/live';
+  const LIVE_STREAM_URL = process.env.NEXT_PUBLIC_STREAM_URL || 'https://nexo-radio-bridge-axxt.onrender.com/live';
 
   // Dedicated iOS-compatible direct track playback coordinator
   const playDirectTrack = async (targetSongUrl: string, syncTime: number) => {

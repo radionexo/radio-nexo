@@ -430,7 +430,7 @@ export default function StudioLibraryPage() {
           setUploadProgress(55);
           const bridgeBase = process.env.NEXT_PUBLIC_STREAM_URL
             ? process.env.NEXT_PUBLIC_STREAM_URL.replace(/\/live.*$/, '')
-            : 'https://nexo-radio-bridge.onrender.com';
+            : 'https://nexo-radio-bridge-axxt.onrender.com';
           const res = await fetch(`${bridgeBase}/upload?name=${encodeURIComponent(uploadFile.name)}`, {
             method: 'POST',
             body: uploadFile,

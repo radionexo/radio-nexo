@@ -641,7 +641,7 @@ class AudioEngine {
       this.mediaRecorder = new MediaRecorder(stream, options);
 
       // Connect to Source Bridge WebSocket
-      const defaultWsUrl = 'wss://nexo-radio-bridge.onrender.com/broadcast';
+      const defaultWsUrl = 'wss://nexo-radio-bridge-axxt.onrender.com/broadcast';
       const wsUrl = process.env.NEXT_PUBLIC_BRIDGE_WS_URL || defaultWsUrl;
       const initialChunkQueue: ArrayBuffer[] = [];
 
