@@ -14,6 +14,8 @@ import {
   Plus,
   Trash2,
   GripVertical,
+  ChevronUp,
+  ChevronDown,
   ExternalLink,
   Search,
   CheckCircle2,
@@ -93,6 +95,33 @@ export default function StudioDashboardPage() {
   const [isMicModalOpen, setIsMicModalOpen] = useState(false);
   const [isListenersModalOpen, setIsListenersModalOpen] = useState(false);
   const [onlineListeners, setOnlineListeners] = useState<OnlineListener[]>([]);
+  const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  const handleDrop = (targetIdx: number) => {
+    if (draggedIdx === null || draggedIdx === targetIdx) {
+      setDraggedIdx(null);
+      setDragOverIdx(null);
+      return;
+    }
+    const newQueue = [...queue];
+    const [movedSong] = newQueue.splice(draggedIdx, 1);
+    newQueue.splice(targetIdx, 0, movedSong);
+    setQueue(newQueue);
+    radioStore.setQueue(newQueue);
+    setDraggedIdx(null);
+    setDragOverIdx(null);
+  };
+
+  const handleMoveQueueItem = (fromIdx: number, direction: 'up' | 'down') => {
+    const targetIdx = direction === 'up' ? fromIdx - 1 : fromIdx + 1;
+    if (targetIdx < 0 || targetIdx >= queue.length) return;
+    const newQueue = [...queue];
+    const [movedSong] = newQueue.splice(fromIdx, 1);
+    newQueue.splice(targetIdx, 0, movedSong);
+    setQueue(newQueue);
+    radioStore.setQueue(newQueue);
+  };
 
   // Sync state
   useEffect(() => {
@@ -496,11 +525,47 @@ export default function StudioDashboardPage() {
                   queue.map((song, idx) => (
                     <div
                       key={`${song.id}-${idx}`}
-                      className="flex items-center justify-between p-2.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/5 transition-all group"
+                      draggable
+                      onDragStart={(e) => {
+                        setDraggedIdx(idx);
+                        e.dataTransfer.effectAllowed = 'move';
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        if (dragOverIdx !== idx) setDragOverIdx(idx);
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverIdx === idx) setDragOverIdx(null);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        handleDrop(idx);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedIdx(null);
+                        setDragOverIdx(null);
+                      }}
+                      className={`flex items-center justify-between p-2.5 rounded-2xl border transition-all select-none group cursor-grab active:cursor-grabbing ${
+                        draggedIdx === idx
+                          ? 'opacity-30 border-dashed border-[#e5b45f] scale-[0.98]'
+                          : dragOverIdx === idx
+                          ? 'bg-[#e5b45f]/15 border-[#e5b45f] shadow-lg shadow-[#e5b45f]/10 -translate-y-0.5'
+                          : 'bg-white/5 hover:bg-white/10 border-white/5'
+                      }`}
                     >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="text-xs font-mono text-gray-500 w-4">{idx + 1}</span>
-                        <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0 bg-neutral-900">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {/* Drag Handle Icon */}
+                        <div
+                          className="text-gray-500 hover:text-[#e5b45f] p-1 -ml-1 transition-colors shrink-0"
+                          title="Arrastra para subir o bajar de posición"
+                        >
+                          <GripVertical className="w-4 h-4" />
+                        </div>
+                        <span className="text-[11px] font-mono text-gray-400 w-3 text-center shrink-0">
+                          {idx + 1}
+                        </span>
+                        <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0 bg-neutral-900 ml-1">
                           <img
                             src={song.cover_url || '/cover_default.webp'}
                             alt={song.title}
@@ -510,24 +575,57 @@ export default function StudioDashboardPage() {
                             }}
                           />
                         </div>
-                        <div className="min-w-0">
+                        <div className="min-w-0 ml-1">
                           <h4 className="text-xs font-semibold text-white truncate">{song.title}</h4>
                           <p className="text-[11px] text-gray-400 truncate">{song.artist}</p>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-gray-400 font-mono">
+                      <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <span className="text-[11px] text-gray-400 font-mono mr-1">
                           {formatTime(song.duration)}
                         </span>
+
+                        {/* Quick Up / Down Reorder Arrows */}
+                        <div className="flex flex-col -space-y-1">
+                          <button
+                            type="button"
+                            onClick={() => handleMoveQueueItem(idx, 'up')}
+                            disabled={idx === 0}
+                            className={`p-1 rounded transition-colors ${
+                              idx === 0
+                                ? 'text-gray-700 opacity-20 cursor-not-allowed'
+                                : 'text-gray-400 hover:text-[#e5b45f] hover:bg-white/10'
+                            }`}
+                            title="Subir posición"
+                          >
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleMoveQueueItem(idx, 'down')}
+                            disabled={idx === queue.length - 1}
+                            className={`p-1 rounded transition-colors ${
+                              idx === queue.length - 1
+                                ? 'text-gray-700 opacity-20 cursor-not-allowed'
+                                : 'text-gray-400 hover:text-[#e5b45f] hover:bg-white/10'
+                            }`}
+                            title="Bajar posición"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
                         <button
+                          type="button"
                           onClick={() => handlePlaySong(song)}
-                          className="p-1.5 rounded-lg bg-[#e5b45f] text-black hover:bg-[#f3c87a] transition-all opacity-80 group-hover:opacity-100"
+                          className="p-1.5 rounded-lg bg-[#e5b45f] text-black hover:bg-[#f3c87a] transition-all opacity-80 group-hover:opacity-100 ml-1"
                           title="Reproducir ahora"
                         >
                           <Play className="w-3.5 h-3.5 fill-current" />
                         </button>
                         <button
+                          type="button"
                           onClick={() => radioStore.removeFromQueue(idx)}
                           className="p-1.5 text-gray-500 hover:text-rose-400 transition-colors"
                           title="Quitar de cola"

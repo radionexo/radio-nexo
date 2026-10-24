@@ -965,6 +965,17 @@ class RadioStore {
     this.setQueue(q);
   }
 
+  public moveInQueue(fromIndex: number, toIndex: number): void {
+    const q = this.getQueue();
+    if (fromIndex < 0 || fromIndex >= q.length || toIndex < 0 || toIndex >= q.length || fromIndex === toIndex) {
+      return;
+    }
+    const [item] = q.splice(fromIndex, 1);
+    q.splice(toIndex, 0, item);
+    this.setQueue(q);
+  }
+
+
   // --- REQUESTS ---
   public async getRequests(forceRefresh = false): Promise<SongRequest[]> {
     if (!forceRefresh && this.cachedRequests && Date.now() - this.requestsCacheTime < this.CACHE_TTL_MS) {
