@@ -1090,6 +1090,28 @@ class RadioStore {
     }
   }
 
+  public getLiveSongProgress(state?: Partial<StationState> | null): number {
+    const s = state || this.getStationState();
+    if (!s) return 0;
+    if (!s.is_live && !s.current_song_title) return 0;
+
+    if (s.updated_at) {
+      const startMs = new Date(s.updated_at).getTime();
+      if (!isNaN(startMs)) {
+        const elapsed = Math.floor((Date.now() - startMs) / 1000);
+        if (elapsed >= 0) {
+          const duration = s.current_song_duration || 0;
+          if (duration > 0) {
+            return elapsed < duration ? elapsed : elapsed % duration;
+          }
+          return elapsed;
+        }
+      }
+    }
+
+    return s.current_song_progress || 0;
+  }
+
   // --- STATION STATE ---
   public getStationState(): StationState {
     if (typeof window !== 'undefined') {
@@ -1103,6 +1125,8 @@ class RadioStore {
           if (parsed.listeners_count >= 1200) {
             parsed.listeners_count = 1;
           }
+          // Dynamically compute live song progress so all devices get exact timestamp
+          parsed.current_song_progress = this.getLiveSongProgress(parsed);
           return parsed;
         } catch {}
       }
@@ -1112,10 +1136,24 @@ class RadioStore {
 
   public updateStationState(partial: Partial<StationState>): StationState {
     const current = this.getStationState();
+
+    const isSongChange =
+      (partial.current_song_id !== undefined && partial.current_song_id !== current.current_song_id) ||
+      (partial.current_song_title !== undefined && partial.current_song_title !== current.current_song_title) ||
+      (partial.current_song_url !== undefined && partial.current_song_url !== current.current_song_url);
+
+    let nextUpdatedAt = current.updated_at || new Date().toISOString();
+    if (partial.updated_at) {
+      nextUpdatedAt = partial.updated_at;
+    } else if (isSongChange) {
+      const offsetSec = partial.current_song_progress || 0;
+      nextUpdatedAt = new Date(Date.now() - offsetSec * 1000).toISOString();
+    }
+
     const updated: StationState = {
       ...current,
       ...partial,
-      updated_at: new Date().toISOString(),
+      updated_at: nextUpdatedAt,
     };
 
     if (typeof window !== 'undefined') {
@@ -1169,10 +1207,10 @@ class RadioStore {
           current_song_cover: updated.current_song_cover || '/cover_default.webp',
           current_song_url: updated.current_song_url || '/songs/summer.mp3',
           current_song_duration: updated.current_song_duration || 0,
-          current_song_progress: 0,
+          current_song_progress: updated.current_song_progress || 0,
           listeners_count: updated.listeners_count || 1,
           air_time_seconds: updated.air_time_seconds || 0,
-          updated_at: new Date().toISOString(),
+          updated_at: updated.updated_at || new Date().toISOString(),
         };
 
         supabase
@@ -1230,3 +1268,7 @@ class RadioStore {
 }
 
 export const radioStore = new RadioStore();
+
+export function getLiveSongProgress(state?: Partial<StationState> | null): number {
+  return radioStore.getLiveSongProgress(state);
+}
