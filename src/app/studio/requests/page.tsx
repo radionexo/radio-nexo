@@ -26,7 +26,13 @@ export default function StudioRequestsPage() {
     const unsub = radioStore.subscribeToNewRequests(() => {
       loadData();
     });
-    return () => unsub();
+    const unsubRadio = radioStore.subscribe(() => {
+      loadData();
+    });
+    return () => {
+      unsub();
+      unsubRadio();
+    };
   }, []);
 
   const loadData = async () => {

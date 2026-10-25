@@ -99,9 +99,10 @@ export function StudioChatHub({
       setSoundEnabled(enabled);
     });
 
-    // 7. RadioStore listeners sync
+    // 7. RadioStore listeners & requests sync
     const unsubRadio = radioStore.subscribe(() => {
       setOnlineListeners(radioStore.getOnlineListeners());
+      radioStore.getRequests().then((reqs) => setRequests(reqs));
     });
 
     return () => {

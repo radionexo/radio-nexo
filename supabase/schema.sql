@@ -100,9 +100,10 @@ CREATE POLICY "Public read songs" ON public.songs FOR SELECT USING (true);
 CREATE POLICY "Public read playlists" ON public.playlists FOR SELECT USING (true);
 CREATE POLICY "Public read playlist_songs" ON public.playlist_songs FOR SELECT USING (true);
 
--- 2. Public can insert song requests
+-- 2. Public can insert, read, and cabina manage song requests
+CREATE POLICY "Public read song_requests" ON public.song_requests FOR SELECT USING (true);
 CREATE POLICY "Public insert requests" ON public.song_requests FOR INSERT WITH CHECK (true);
-CREATE POLICY "Auth manage requests" ON public.song_requests FOR ALL TO authenticated USING (true);
+CREATE POLICY "Public manage song_requests" ON public.song_requests FOR ALL USING (true);
 
 -- 3. Studio / Cabina management
 CREATE POLICY "Public manage songs" ON public.songs FOR ALL USING (true);

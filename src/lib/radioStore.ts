@@ -1023,7 +1023,13 @@ class RadioStore {
   }
 
   public async addRequest(req: Omit<SongRequest, 'id' | 'created_at' | 'status'>): Promise<SongRequest> {
+    const generatedId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : 'req-' + Date.now();
+
     const payload = {
+      id: generatedId,
       name: req.name.trim(),
       song_title: req.song_title.trim(),
       artist: req.artist.trim(),
@@ -1034,16 +1040,41 @@ class RadioStore {
 
     if (isSupabaseConfigured && supabase) {
       try {
+        let created: SongRequest | null = null;
+
+        // Try inserting with .select() to get database-generated values if any
         const { data, error } = await supabase
           .from('song_requests')
           .insert(payload)
           .select()
-          .single();
+          .maybeSingle();
 
         if (!error && data) {
-          const created = data as SongRequest;
+          created = data as SongRequest;
+        } else {
+          // If .select() fails (for example, if RLS SELECT policy is restrictive), try inserting directly without select
+          const directInsert = await supabase
+            .from('song_requests')
+            .insert(payload);
+
+          if (!directInsert.error) {
+            created = {
+              id: payload.id,
+              name: payload.name,
+              song_title: payload.song_title,
+              artist: payload.artist,
+              dedication: payload.dedication || undefined,
+              status: payload.status,
+              created_at: payload.created_at,
+            };
+          } else {
+            console.warn('Supabase addRequest insert error:', directInsert.error.message);
+          }
+        }
+
+        if (created) {
           const current = await this.getRequests();
-          const updated = [created, ...current.filter((r) => r.id !== created.id)];
+          const updated = [created, ...current.filter((r) => r.id !== created!.id)];
           if (typeof window !== 'undefined') {
             localStorage.setItem(REQUESTS_KEY, JSON.stringify(updated));
           }
@@ -1056,8 +1087,6 @@ class RadioStore {
           this.notifyNewRequest(created);
           this.postSync();
           return created;
-        } else if (error) {
-          console.warn('Supabase addRequest error:', error.message);
         }
       } catch (err) {
         console.warn('Supabase addRequest exception:', err);
@@ -1066,11 +1095,10 @@ class RadioStore {
 
     const fallbackReq: SongRequest = {
       ...payload,
-      id: 'req-' + Date.now(),
       dedication: payload.dedication || undefined,
     };
     const current = await this.getRequests();
-    const updated = [fallbackReq, ...current];
+    const updated = [fallbackReq, ...current.filter((r) => r.id !== fallbackReq.id)];
     if (typeof window !== 'undefined') {
       localStorage.setItem(REQUESTS_KEY, JSON.stringify(updated));
     }
@@ -1087,7 +1115,14 @@ class RadioStore {
 
   public async updateRequestStatus(id: string, status: SongRequest['status']): Promise<void> {
     if (isSupabaseConfigured && supabase) {
-      await supabase.from('song_requests').update({ status }).eq('id', id);
+      try {
+        const { error } = await supabase.from('song_requests').update({ status }).eq('id', id);
+        if (error) {
+          console.warn('Supabase updateRequestStatus error:', error.message);
+        }
+      } catch (err) {
+        console.warn('Supabase updateRequestStatus error:', err);
+      }
     }
     const current = await this.getRequests();
     const item = current.find((r) => r.id === id);
@@ -1099,6 +1134,27 @@ class RadioStore {
       this.invalidateRequestsCache();
       this.postSync();
     }
+  }
+
+  public async deleteRequest(id: string): Promise<void> {
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { error } = await supabase.from('song_requests').delete().eq('id', id);
+        if (error) {
+          console.warn('Supabase deleteRequest error:', error.message);
+        }
+      } catch (err) {
+        console.warn('Supabase deleteRequest error:', err);
+      }
+    }
+    const current = await this.getRequests();
+    const updated = current.filter((r) => r.id !== id);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(REQUESTS_KEY, JSON.stringify(updated));
+    }
+    this.invalidateRequestsCache();
+    this.notify();
+    this.postSync();
   }
 
   public getLiveSongProgress(state?: Partial<StationState> | null): number {

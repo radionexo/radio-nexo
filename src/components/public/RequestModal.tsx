@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
-import { X, Music2, Heart, CheckCircle2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Music2, Heart, CheckCircle2, AlertCircle } from 'lucide-react';
 import { radioStore } from '@/lib/radioStore';
 
 interface RequestModalProps {
@@ -16,6 +16,17 @@ export default function RequestModal({ isOpen, onClose }: RequestModalProps) {
   const [dedication, setDedication] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  // Close on Escape key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -24,6 +35,7 @@ export default function RequestModal({ isOpen, onClose }: RequestModalProps) {
     if (!name.trim() || !songTitle.trim() || !artist.trim()) return;
 
     setIsSubmitting(true);
+    setErrorMsg('');
     try {
       await radioStore.addRequest({
         name: name.trim(),
@@ -39,18 +51,26 @@ export default function RequestModal({ isOpen, onClose }: RequestModalProps) {
         setSongTitle('');
         setArtist('');
         setDedication('');
+        setErrorMsg('');
         onClose();
       }, 2000);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setErrorMsg('No se pudo enviar la solicitud. Por favor intenta de nuevo.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md transition-opacity">
-      <div className="relative w-full max-w-lg rounded-2xl glass-panel p-6 border border-[#e5b45f]/30 shadow-2xl overflow-hidden">
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md transition-opacity animate-in fade-in duration-200"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-lg rounded-2xl glass-panel p-6 border border-[#e5b45f]/30 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200"
+      >
         {/* Ambient Top Glow */}
         <div className="absolute -top-16 left-1/2 -translate-x-1/2 w-48 h-24 bg-[#e5b45f]/20 blur-3xl pointer-events-none" />
 
@@ -84,6 +104,12 @@ export default function RequestModal({ isOpen, onClose }: RequestModalProps) {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+            {errorMsg && (
+              <div className="flex items-center gap-2 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
             <div>
               <label className="block text-xs font-medium text-gray-300 mb-1.5">
                 Tu nombre o nickname <span className="text-[#e5b45f]">*</span>
