@@ -33,6 +33,9 @@ class AudioEngine {
 
   private mediaRecorder: MediaRecorder | null = null;
   private broadcastWs: WebSocket | null = null;
+  private broadcastHeaderChunk: ArrayBuffer | null = null;
+  private broadcastQueue: ArrayBuffer[] = [];
+  private broadcastReconnectTimeout: any = null;
 
   // State
   private isBroadcasting = false;
@@ -121,6 +124,10 @@ class AudioEngine {
       this.audioSourceNode.connect(this.musicGainNode);
       this.musicGainNode.connect(this.masterGainNode);
       this.musicGainNode.connect(this.musicAnalyser);
+
+      // Mic -> micGain -> masterGain & micAnalyser
+      this.micGainNode.connect(this.masterGainNode);
+      this.micGainNode.connect(this.micAnalyser);
 
       // Master -> masterDestination (to broadcast stream) & masterAnalyser
       this.masterGainNode.connect(this.masterDestination);
@@ -625,56 +632,94 @@ class AudioEngine {
   }
 
   // --- BROADCAST TRANSMISSION TO BRIDGE / ICECAST ---
+  private connectBroadcastWebSocket() {
+    if (!this.isBroadcasting) return;
+
+    const defaultWsUrl = 'wss://nexo-radio-bridge-axxt.onrender.com/broadcast';
+    const wsUrl = process.env.NEXT_PUBLIC_BRIDGE_WS_URL || defaultWsUrl;
+
+    try {
+      if (this.broadcastWs) {
+        try { this.broadcastWs.close(); } catch {}
+        this.broadcastWs = null;
+      }
+
+      const ws = new WebSocket(wsUrl);
+      ws.binaryType = 'arraybuffer';
+      this.broadcastWs = ws;
+
+      ws.onopen = () => {
+        console.log('[Broadcast] Connected to NEXO Audio Bridge at', wsUrl);
+        // Send container header first if available so bridge and listeners initialize
+        if (this.broadcastHeaderChunk && ws.readyState === WebSocket.OPEN) {
+          try { ws.send(this.broadcastHeaderChunk); } catch {}
+        }
+        // Flush any recently queued audio chunks
+        while (this.broadcastQueue.length > 0) {
+          const chunk = this.broadcastQueue.shift();
+          if (chunk && ws.readyState === WebSocket.OPEN) {
+            try { ws.send(chunk); } catch {}
+          }
+        }
+      };
+
+      ws.onclose = () => {
+        console.warn('[Broadcast] WebSocket disconnected.');
+        if (this.isBroadcasting) {
+          if (this.broadcastReconnectTimeout) clearTimeout(this.broadcastReconnectTimeout);
+          this.broadcastReconnectTimeout = setTimeout(() => {
+            if (this.isBroadcasting) {
+              this.connectBroadcastWebSocket();
+            }
+          }, 2000);
+        }
+      };
+
+      ws.onerror = (e) => {
+        console.warn('[Broadcast] WebSocket error notice:', e);
+      };
+    } catch (wsErr) {
+      console.warn('Could not establish WebSocket to bridge:', wsErr);
+    }
+  }
+
   public startBroadcasting() {
     this.init();
     if (!this.masterDestination) return;
 
-    if (this.isBroadcasting) return;
+    if (this.isBroadcasting) {
+      if (!this.broadcastWs || this.broadcastWs.readyState === WebSocket.CLOSED) {
+        this.connectBroadcastWebSocket();
+      }
+      return;
+    }
 
     try {
       const stream = this.masterDestination.stream;
-      const mimeType = MediaRecorder.isTypeSupported('audio/mp4')
-        ? 'audio/mp4'
-        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
-        ? 'audio/ogg;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
         : '';
 
       const options = mimeType ? { mimeType, audioBitsPerSecond: 128000 } : { audioBitsPerSecond: 128000 };
       this.mediaRecorder = new MediaRecorder(stream, options);
 
-      // Connect to Source Bridge WebSocket
-      const defaultWsUrl = 'wss://nexo-radio-bridge-axxt.onrender.com/broadcast';
-      const wsUrl = process.env.NEXT_PUBLIC_BRIDGE_WS_URL || defaultWsUrl;
-      const initialChunkQueue: ArrayBuffer[] = [];
-
-      try {
-        this.broadcastWs = new WebSocket(wsUrl);
-        this.broadcastWs.binaryType = 'arraybuffer';
-
-        this.broadcastWs.onopen = () => {
-          console.log('Connected to NEXO Audio Bridge Server at', wsUrl);
-          while (initialChunkQueue.length > 0) {
-            const chunk = initialChunkQueue.shift();
-            if (chunk) this.broadcastWs?.send(chunk);
-          }
-        };
-
-        this.broadcastWs.onerror = (e) => {
-          console.warn('Bridge server error notice:', e);
-        };
-      } catch (wsErr) {
-        console.warn('Could not establish WebSocket to bridge:', wsErr);
-      }
-
       this.mediaRecorder.ondataavailable = async (e) => {
         if (e.data && e.data.size > 0) {
           const buffer = await e.data.arrayBuffer();
+          if (!this.broadcastHeaderChunk) {
+            this.broadcastHeaderChunk = buffer;
+          }
           if (this.broadcastWs && this.broadcastWs.readyState === WebSocket.OPEN) {
             this.broadcastWs.send(buffer);
           } else {
-            initialChunkQueue.push(buffer);
+            this.broadcastQueue.push(buffer);
+            if (this.broadcastQueue.length > 8) {
+              this.broadcastQueue.shift();
+            }
           }
         }
       };
@@ -685,6 +730,8 @@ class AudioEngine {
       if (typeof window !== 'undefined') {
         localStorage.setItem('nexo_broadcast_enabled', 'true');
       }
+
+      this.connectBroadcastWebSocket();
 
       // Start on-air broadcast timer (preserving air time across refresh)
       if (this.airTimerInterval) {
@@ -708,6 +755,10 @@ class AudioEngine {
   }
 
   public stopBroadcasting() {
+    if (this.broadcastReconnectTimeout) {
+      clearTimeout(this.broadcastReconnectTimeout);
+      this.broadcastReconnectTimeout = null;
+    }
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
       try {
         this.mediaRecorder.stop();
@@ -719,6 +770,7 @@ class AudioEngine {
       } catch {}
       this.broadcastWs = null;
     }
+    this.broadcastQueue = [];
     if (this.airTimerInterval) {
       clearInterval(this.airTimerInterval);
       this.airTimerInterval = null;
