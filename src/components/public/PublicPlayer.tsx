@@ -328,40 +328,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       }
     });
 
-    // Active Watchdog to detect stalled live streams and auto-recover playback
-    let lastAudioTime = -1;
-    let freezeTicks = 0;
-
-    const watchdog = setInterval(() => {
-      if (!audioRef.current) return;
-      const a = audioRef.current;
-      const isLive = checkIfLiveStream(a.src);
-
-      if (isLive && !a.paused) {
-        if (lastAudioTime >= 0 && Math.abs(a.currentTime - lastAudioTime) < 0.2) {
-          freezeTicks++;
-          if (freezeTicks >= 3) {
-            console.warn('[Player Watchdog] Live stream stalled, auto-recovering...');
-            freezeTicks = 0;
-            a.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
-            a.play().catch(() => {
-              const current = radioStore.getStationState();
-              const syncTime = getLiveSongProgress(current);
-              playDirectTrack(current.current_song_url || '/songs/summer.mp3', syncTime).catch(() => {});
-            });
-          }
-        } else {
-          freezeTicks = 0;
-        }
-        lastAudioTime = a.currentTime;
-      } else {
-        lastAudioTime = -1;
-        freezeTicks = 0;
-      }
-    }, 2500);
-
     return () => {
-      clearInterval(watchdog);
       audio.pause();
       audio.src = '';
     };

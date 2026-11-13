@@ -226,18 +226,23 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    console.log('[Broadcaster] NEXO Studio disconnected. Resetting stream headers and closing stale listener connections.');
+    console.log('[Broadcaster] NEXO Studio disconnected.');
     isBroadcasting = false;
     broadcasterSocket = null;
-    headerChunk = null;
 
-    // Cleanly close lingering listener connections so their player reconnects with fresh headers
-    for (const client of listeners) {
-      try {
-        client.end();
-      } catch {}
-    }
-    listeners.clear();
+    // Grace period: allow 20 seconds for studio to reconnect before closing listeners
+    setTimeout(() => {
+      if (!isBroadcasting && listeners.size > 0) {
+        console.log('[Broadcaster] Broadcaster idle for 20s, closing listener connections.');
+        headerChunk = null;
+        for (const client of listeners) {
+          try {
+            client.end();
+          } catch {}
+        }
+        listeners.clear();
+      }
+    }, 20000);
 
     if (upstreamIcecastReq) {
       upstreamIcecastReq.end();

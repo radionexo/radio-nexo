@@ -33,7 +33,6 @@ class AudioEngine {
 
   private mediaRecorder: MediaRecorder | null = null;
   private broadcastWs: WebSocket | null = null;
-  private broadcastPingInterval: any = null;
   private broadcastReconnectTimeout: any = null;
   private queuedBroadcastChunks: ArrayBuffer[] = [];
 
@@ -691,25 +690,10 @@ class AudioEngine {
             ws.send(chunk);
           }
         }
-
-        // Heartbeat ping every 15s to keep cloud proxies and Render from timing out
-        if (this.broadcastPingInterval) clearInterval(this.broadcastPingInterval);
-        this.broadcastPingInterval = setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            try {
-              ws.send(new Uint8Array([0x9])); // 1-byte ping
-            } catch {}
-          }
-        }, 15000);
       };
 
       ws.onclose = () => {
         console.warn('[Broadcaster] WebSocket connection closed.');
-        if (this.broadcastPingInterval) {
-          clearInterval(this.broadcastPingInterval);
-          this.broadcastPingInterval = null;
-        }
-
         // Automatic reconnection loop with fresh stream headers
         if (this.isBroadcasting) {
           if (this.broadcastReconnectTimeout) clearTimeout(this.broadcastReconnectTimeout);
@@ -768,10 +752,6 @@ class AudioEngine {
 
   public stopBroadcasting() {
     this.isBroadcasting = false;
-    if (this.broadcastPingInterval) {
-      clearInterval(this.broadcastPingInterval);
-      this.broadcastPingInterval = null;
-    }
     if (this.broadcastReconnectTimeout) {
       clearTimeout(this.broadcastReconnectTimeout);
       this.broadcastReconnectTimeout = null;
