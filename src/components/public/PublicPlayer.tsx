@@ -1,9 +1,12 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Volume2, VolumeX, Heart, Radio, Music2 } from 'lucide-react';
+import { Play, Pause, Volume2, Volume1, VolumeX, Heart, Radio, Music2 } from 'lucide-react';
 import { radioStore, getLiveSongProgress } from '@/lib/radioStore';
 import { StationState } from '@/lib/types';
+
+const VOLUME_STORAGE_KEY = 'nexo_listener_volume_v1';
+const MUTED_STORAGE_KEY = 'nexo_listener_muted_v1';
 
 interface PublicPlayerProps {
   onOpenRequestModal: () => void;
@@ -20,6 +23,66 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
   const [likeToast, setLikeToast] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Restore saved volume and muted state from localStorage
+  useEffect(() => {
+    try {
+      const savedVol = localStorage.getItem(VOLUME_STORAGE_KEY);
+      if (savedVol !== null) {
+        const parsed = parseFloat(savedVol);
+        if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) {
+          setVolume(parsed);
+          if (audioRef.current) {
+            audioRef.current.volume = parsed;
+          }
+        }
+      }
+      const savedMuted = localStorage.getItem(MUTED_STORAGE_KEY);
+      if (savedMuted !== null) {
+        setIsMuted(savedMuted === 'true');
+      }
+    } catch (e) {
+      console.warn('Could not read volume preference:', e);
+    }
+  }, []);
+
+  const handleVolumeChange = (newVal: number) => {
+    const clamped = Math.max(0, Math.min(1, newVal));
+    setVolume(clamped);
+    if (audioRef.current) {
+      audioRef.current.volume = isMuted ? 0 : clamped;
+    }
+    if (clamped > 0 && isMuted) {
+      setIsMuted(false);
+      try {
+        localStorage.setItem(MUTED_STORAGE_KEY, 'false');
+      } catch {}
+    }
+    if (clamped === 0 && !isMuted) {
+      setIsMuted(true);
+      try {
+        localStorage.setItem(MUTED_STORAGE_KEY, 'true');
+      } catch {}
+    }
+    try {
+      if (clamped > 0) {
+        localStorage.setItem(VOLUME_STORAGE_KEY, String(clamped));
+      }
+    } catch {}
+  };
+
+  const handleToggleMute = () => {
+    setIsMuted((prev) => {
+      const next = !prev;
+      if (audioRef.current) {
+        audioRef.current.volume = next ? 0 : volume;
+      }
+      try {
+        localStorage.setItem(MUTED_STORAGE_KEY, String(next));
+      } catch {}
+      return next;
+    });
+  };
 
   // Sync station state in real-time
   useEffect(() => {
@@ -531,24 +594,44 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
           )}
         </button>
 
-        {/* Mute / Unmute Button */}
-        <button
-          type="button"
-          onClick={() => setIsMuted((prev) => !prev)}
-          className={`p-2.5 sm:p-3 rounded-full transition-all duration-200 active:scale-90 ${
-            isMuted
-              ? 'text-rose-400 bg-rose-500/10'
-              : 'text-gray-400 hover:text-white hover:bg-white/5'
-          }`}
-          title={isMuted ? 'Activar sonido' : 'Silenciar'}
-          aria-label={isMuted ? 'Activar sonido' : 'Silenciar'}
-        >
-          {isMuted ? (
-            <VolumeX className="w-5 h-5 sm:w-6 sm:h-6 text-rose-400" />
-          ) : (
-            <Volume2 className="w-5 h-5 sm:w-6 sm:h-6" />
-          )}
-        </button>
+        {/* Volume Control Pill (Mute toggle + Slider + Percentage) */}
+        <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-full bg-black/40 border border-white/10 backdrop-blur-md transition-all shadow-md">
+          <button
+            type="button"
+            onClick={handleToggleMute}
+            className={`p-1.5 rounded-full transition-all duration-200 active:scale-90 cursor-pointer ${
+              isMuted || volume === 0
+                ? 'text-rose-400 bg-rose-500/10'
+                : 'text-gray-300 hover:text-white hover:bg-white/10'
+            }`}
+            title={isMuted ? 'Activar sonido' : 'Silenciar'}
+            aria-label={isMuted ? 'Activar sonido' : 'Silenciar'}
+          >
+            {isMuted || volume === 0 ? (
+              <VolumeX className="w-4 h-4 sm:w-5 sm:h-5 text-rose-400" />
+            ) : volume < 0.5 ? (
+              <Volume1 className="w-4 h-4 sm:w-5 sm:h-5 text-[#e5b45f]" />
+            ) : (
+              <Volume2 className="w-4 h-4 sm:w-5 sm:h-5 text-[#e5b45f]" />
+            )}
+          </button>
+
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={isMuted ? 0 : volume}
+            onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+            className="w-16 sm:w-24 accent-[#e5b45f] h-1.5 bg-white/20 rounded-lg cursor-pointer transition-all hover:bg-white/30"
+            title={`Volumen: ${Math.round((isMuted ? 0 : volume) * 100)}%`}
+            aria-label="Control de volumen"
+          />
+
+          <span className="text-[10px] sm:text-[11px] font-mono text-gray-300 w-7 text-right select-none font-medium">
+            {Math.round((isMuted ? 0 : volume) * 100)}%
+          </span>
+        </div>
       </div>
 
       {/* Live Badge Status & Song Request Button */}
