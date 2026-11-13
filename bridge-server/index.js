@@ -188,11 +188,6 @@ wss.on('connection', (ws) => {
   setupIcecastUpstream();
 
   ws.on('message', (data) => {
-    // Ignore heartbeat ping frames (1-2 bytes)
-    if (data.length <= 2) {
-      return;
-    }
-
     // Save the first chunk as container header and detect format
     if (!headerChunk) {
       headerChunk = Buffer.from(data);
@@ -229,21 +224,6 @@ wss.on('connection', (ws) => {
     console.log('[Broadcaster] NEXO Studio disconnected.');
     isBroadcasting = false;
     broadcasterSocket = null;
-
-    // Grace period: allow 20 seconds for studio to reconnect before closing listeners
-    setTimeout(() => {
-      if (!isBroadcasting && listeners.size > 0) {
-        console.log('[Broadcaster] Broadcaster idle for 20s, closing listener connections.');
-        headerChunk = null;
-        for (const client of listeners) {
-          try {
-            client.end();
-          } catch {}
-        }
-        listeners.clear();
-      }
-    }, 20000);
-
     if (upstreamIcecastReq) {
       upstreamIcecastReq.end();
       upstreamIcecastReq = null;
@@ -306,17 +286,4 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`- Icecast Upstream: ${ICECAST_URL}`);
   }
   console.log(`=================================================`);
-
-  // Self keep-alive ping every 8 minutes to prevent Render free instance from sleeping
-  setInterval(() => {
-    try {
-      const rawUrl = process.env.RENDER_EXTERNAL_URL || process.env.NEXT_PUBLIC_STREAM_URL;
-      if (rawUrl) {
-        const parsed = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`);
-        const target = `${parsed.protocol}//${parsed.host}/status`;
-        const client = target.startsWith('https') ? require('https') : require('http');
-        client.get(target, () => {}).on('error', () => {});
-      }
-    } catch {}
-  }, 8 * 60 * 1000);
 });

@@ -378,21 +378,27 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
   }, [isPlaying]);
 
   // When the DJ goes on air with microphone (is_mic_active = true),
-  // if listener is currently on direct track fallback, reconnect to live stream so voice is heard!
+  // switch listener to live stream so voice is heard!
+  // When DJ exits mic, return listener seamlessly to crisp synchronized direct song!
   useEffect(() => {
-    if (isPlaying && audioRef.current && stationState.is_mic_active && LIVE_STREAM_URL) {
-      const currentSrc = audioRef.current.src || '';
-      const isLiveStream = checkIfLiveStream(currentSrc);
+    if (!isPlaying || !audioRef.current) return;
+    const currentSrc = audioRef.current.src || '';
+    const isLiveStream = checkIfLiveStream(currentSrc);
+
+    if (stationState.is_mic_active && LIVE_STREAM_URL) {
       if (!isLiveStream) {
-        const audio = audioRef.current;
-        audio.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
-        audio.play().catch((err) => {
+        audioRef.current.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
+        audioRef.current.play().catch((err) => {
           console.warn('Could not switch to live stream on mic active:', err);
           const syncTime = getLiveSongProgress(stationState);
           const targetUrl = stationState.current_song_url || '/songs/summer.mp3';
           playDirectTrack(targetUrl, syncTime).catch(console.warn);
         });
       }
+    } else if (!stationState.is_mic_active && isLiveStream) {
+      const syncTime = getLiveSongProgress(stationState);
+      const targetUrl = stationState.current_song_url || '/songs/summer.mp3';
+      playDirectTrack(targetUrl, syncTime).catch(console.warn);
     }
   }, [stationState.is_mic_active]);
 
