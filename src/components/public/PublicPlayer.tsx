@@ -377,6 +377,25 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [isPlaying]);
 
+  // When the DJ goes on air with microphone (is_mic_active = true),
+  // if listener is currently on direct track fallback, reconnect to live stream so voice is heard!
+  useEffect(() => {
+    if (isPlaying && audioRef.current && stationState.is_mic_active && LIVE_STREAM_URL) {
+      const currentSrc = audioRef.current.src || '';
+      const isLiveStream = checkIfLiveStream(currentSrc);
+      if (!isLiveStream) {
+        const audio = audioRef.current;
+        audio.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
+        audio.play().catch((err) => {
+          console.warn('Could not switch to live stream on mic active:', err);
+          const syncTime = getLiveSongProgress(stationState);
+          const targetUrl = stationState.current_song_url || '/songs/summer.mp3';
+          playDirectTrack(targetUrl, syncTime).catch(console.warn);
+        });
+      }
+    }
+  }, [stationState.is_mic_active]);
+
   const togglePlay = async () => {
     if (!audioRef.current) return;
 
