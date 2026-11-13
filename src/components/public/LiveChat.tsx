@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { chatStore } from '@/lib/chatStore';
 import { soundEffects } from '@/lib/soundEffects';
+import { radioStore } from '@/lib/radioStore';
 import { ChatMessage } from '@/lib/types';
 
 interface LiveChatViewProps {
@@ -49,6 +50,7 @@ export function LiveChatView({ isDj = false, onClose, isCompact = false, hideHea
   const [tempName, setTempName] = useState('');
   const [nameError, setNameError] = useState('');
   const [currentUserId, setCurrentUserId] = useState('');
+  const [discordUrl, setDiscordUrl] = useState(() => radioStore.getStationState().discord_url || 'https://discord.gg/9AksstuAC');
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [newMessagesBelow, setNewMessagesBelow] = useState(0);
 
@@ -95,6 +97,15 @@ export function LiveChatView({ isDj = false, onClose, isCompact = false, hideHea
       return () => clearTimeout(timer);
     }
   }, [showNameModal]);
+
+  // Synchronize discord invite link reactively from station state
+  useEffect(() => {
+    const updateDiscord = () => {
+      setDiscordUrl(radioStore.getStationState().discord_url || 'https://discord.gg/9AksstuAC');
+    };
+    const unsub = radioStore.subscribe(updateDiscord);
+    return () => unsub();
+  }, []);
 
   const handleRandomNickname = () => {
     const base = FUN_NICKNAMES[Math.floor(Math.random() * FUN_NICKNAMES.length)];
@@ -250,7 +261,7 @@ export function LiveChatView({ isDj = false, onClose, isCompact = false, hideHea
 
           <div className="flex items-center gap-2">
             <a
-              href="https://discord.gg/9AksstuAC"
+              href={discordUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#5865F2]/20 hover:bg-[#5865F2] text-[#5865F2] hover:text-white border border-[#5865F2]/30 text-[11px] font-semibold transition-all shadow-sm"

@@ -56,6 +56,8 @@ export default function NexoRadioPublicPage() {
     return () => unsubscribeChat();
   }, []);
 
+  const discordInviteUrl = stationState.discord_url || 'https://discord.gg/9AksstuAC';
+
   return (
     <div className="relative h-screen bg-[#07080b] text-[#f3f4f6] flex flex-col font-sans overflow-hidden">
       {/* Background Graphic */}
@@ -125,7 +127,7 @@ export default function NexoRadioPublicPage() {
 
           {/* Discord Button */}
           <a
-            href="https://discord.gg/9AksstuAC"
+            href={discordInviteUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1.5 px-3.5 py-1.5 sm:py-2 rounded-full text-xs font-semibold text-white bg-[#5865F2] hover:bg-[#4752c4] shadow-md shadow-[#5865F2]/25 transition-all transform active:scale-95 shrink-0"
@@ -196,7 +198,7 @@ export default function NexoRadioPublicPage() {
             Pedir una canción
           </button>
           <a
-            href="https://discord.gg/9AksstuAC"
+            href={discordInviteUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl font-semibold text-sm text-[#5865F2] bg-[#5865F2]/10 border border-[#5865F2]/20"
@@ -282,7 +284,7 @@ export default function NexoRadioPublicPage() {
 
               {/* Discord Link */}
               <a
-                href="https://discord.gg/9AksstuAC"
+                href={discordInviteUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium text-sm text-gray-400 hover:text-white hover:bg-[#5865F2]/15 hover:border-[#5865F2]/30 border border-transparent transition-all group"
@@ -471,7 +473,7 @@ export default function NexoRadioPublicPage() {
 
                 <div className="flex items-center gap-2">
                   <a
-                    href="https://discord.gg/9AksstuAC"
+                    href={discordInviteUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#5865F2]/20 hover:bg-[#5865F2] text-[#5865F2] hover:text-white border border-[#5865F2]/30 text-[11px] font-semibold transition-all shadow-sm"
@@ -563,7 +565,7 @@ export default function NexoRadioPublicPage() {
           <span className="text-[10px] font-medium">Chat</span>
         </button>
         <a
-          href="https://discord.gg/9AksstuAC"
+          href={discordInviteUrl}
           target="_blank"
           rel="noopener noreferrer"
           className="flex flex-col items-center gap-1 text-gray-400 hover:text-[#5865F2] transition-colors"

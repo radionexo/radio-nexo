@@ -8,6 +8,7 @@ const PLAYLISTS_KEY = 'nexo_radio_playlists_v1';
 const REQUESTS_KEY = 'nexo_radio_requests_v1';
 const STATE_KEY = 'nexo_radio_station_state_v2';
 const QUEUE_KEY = 'nexo_radio_queue_v1';
+const DISCORD_KEY = 'nexo_radio_discord_url_v1';
 
 class RadioStore {
   private broadcastChannel: BroadcastChannel | null = null;
@@ -101,6 +102,9 @@ class RadioStore {
             if (data) {
               const current = this.getStationState();
               const merged = { ...current, ...data };
+              if (data.discord_url) {
+                localStorage.setItem(DISCORD_KEY, data.discord_url);
+              }
               if (merged.listeners_count >= 1200) {
                 merged.listeners_count = 1;
               }
@@ -119,6 +123,9 @@ class RadioStore {
               if (payload) {
                 const current = this.getStationState();
                 const merged = { ...current, ...payload };
+                if (payload.discord_url) {
+                  localStorage.setItem(DISCORD_KEY, payload.discord_url);
+                }
                 localStorage.setItem(STATE_KEY, JSON.stringify(merged));
                 this.notify();
               }
@@ -131,6 +138,9 @@ class RadioStore {
               if (payload.new) {
                 const current = this.getStationState();
                 const merged = { ...current, ...payload.new };
+                if ((payload.new as any).discord_url) {
+                  localStorage.setItem(DISCORD_KEY, (payload.new as any).discord_url);
+                }
                 localStorage.setItem(STATE_KEY, JSON.stringify(merged));
                 this.notify();
               }
@@ -1185,12 +1195,18 @@ class RadioStore {
       // Purge legacy v1 cached state if present
       localStorage.removeItem('nexo_radio_station_state_v1');
 
+      const savedDiscord = localStorage.getItem(DISCORD_KEY);
       const saved = localStorage.getItem(STATE_KEY);
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
           if (parsed.listeners_count >= 1200) {
             parsed.listeners_count = 1;
+          }
+          if (savedDiscord) {
+            parsed.discord_url = savedDiscord;
+          } else if (!parsed.discord_url) {
+            parsed.discord_url = INITIAL_STATION_STATE.discord_url;
           }
           // Dynamically compute live song progress so all devices get exact timestamp
           parsed.current_song_progress = this.getLiveSongProgress(parsed);
@@ -1203,6 +1219,10 @@ class RadioStore {
 
   public updateStationState(partial: Partial<StationState>): StationState {
     const current = this.getStationState();
+
+    if (partial.discord_url !== undefined && typeof window !== 'undefined') {
+      localStorage.setItem(DISCORD_KEY, partial.discord_url);
+    }
 
     const isSongChange =
       (partial.current_song_id !== undefined && partial.current_song_id !== current.current_song_id) ||
@@ -1231,11 +1251,13 @@ class RadioStore {
     // Only persist to Supabase PostgreSQL when actual station metadata changes:
     // - On-air live state changes (is_live)
     // - Microphone on-air state changes (is_mic_active)
+    // - Discord invite URL changes (discord_url)
     // - Current song changes (id, title, artist, cover, url, duration)
     // Tick-by-tick events (such as current_song_progress from timeupdate and air_time_seconds
     // from the on-air timer) are kept purely in local state/storage and MUST NOT trigger Supabase writes.
     // This reduces database writes from >14,400/hour to ~15-20/hour, protecting Supabase quotas.
     const hasSignificantChange =
+      (partial.discord_url !== undefined && partial.discord_url !== current.discord_url) ||
       (partial.is_live !== undefined && partial.is_live !== current.is_live) ||
       (partial.is_mic_active !== undefined && partial.is_mic_active !== current.is_mic_active) ||
       (partial.current_song_id !== undefined && partial.current_song_id !== current.current_song_id) ||
@@ -1280,11 +1302,21 @@ class RadioStore {
           updated_at: updated.updated_at || new Date().toISOString(),
         };
 
+        if (updated.discord_url) {
+          payload.discord_url = updated.discord_url;
+        }
+
         supabase
           .from('station_state')
           .upsert(payload, { onConflict: 'id' })
           .then(({ error }) => {
             if (error) {
+              // Gracefully handle case where discord_url column is not yet migrated in Supabase
+              if (payload.discord_url && error.message?.includes('discord_url') && supabase) {
+                const fallbackPayload = { ...payload };
+                delete fallbackPayload.discord_url;
+                supabase.from('station_state').upsert(fallbackPayload, { onConflict: 'id' }).then(() => {});
+              }
               console.warn('Supabase station_state sync notice:', error.message);
             }
           });
@@ -1293,6 +1325,14 @@ class RadioStore {
 
     this.postSync();
     return updated;
+  }
+
+  public setDiscordUrl(url: string): StationState {
+    const cleanUrl = url.trim() || 'https://discord.gg/9AksstuAC';
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(DISCORD_KEY, cleanUrl);
+    }
+    return this.updateStationState({ discord_url: cleanUrl });
   }
 
   public setListenersCount(count: number) {

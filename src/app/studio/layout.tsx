@@ -20,6 +20,7 @@ import {
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { audioEngine } from '@/lib/audioEngine';
 import { radioStore } from '@/lib/radioStore';
+import { DiscordSettingsModal } from '@/components/studio/DiscordSettingsModal';
 
 export default function StudioLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -52,6 +53,7 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
+  const [isDiscordSettingsOpen, setIsDiscordSettingsOpen] = useState(false);
 
   // Restore sidebar collapsed preference
   useEffect(() => {
@@ -191,14 +193,14 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
     router.replace('/studio/login');
   };
 
-  const navItems: { label: string; href: string; icon: any; match: string[]; disabled?: boolean }[] = [
+  const navItems: { label: string; href: string; icon: any; match: string[]; disabled?: boolean; onClick?: () => void }[] = [
     { label: 'Cabina', href: '/studio', icon: Mic, match: ['/studio', '/studio/live'] },
     { label: 'Biblioteca', href: '/studio/library', icon: Music2, match: ['/studio/library', '/studio/upload'] },
     { label: 'Playlists', href: '/studio/playlists', icon: ListMusic, match: ['/studio/playlists'] },
     { label: 'Solicitudes', href: '/studio/requests', icon: Inbox, match: ['/studio/requests'] },
     { label: 'Programación', href: '#', icon: Calendar, match: [], disabled: true },
     { label: 'Reportes', href: '#', icon: BarChart3, match: [], disabled: true },
-    { label: 'Configuración', href: '#', icon: Settings, match: [], disabled: true },
+    { label: 'Configurar Discord', href: '#', icon: Settings, match: [], onClick: () => setIsDiscordSettingsOpen(true) },
   ];
 
   return (
@@ -285,6 +287,30 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
                       <div className="absolute left-full top-1/2 -translate-y-1/2 ml-3 px-2.5 py-1.5 rounded-xl bg-[#141720] border border-white/10 text-gray-400 text-xs font-medium shadow-2xl opacity-0 -translate-x-2 pointer-events-none group-hover/nav:opacity-100 group-hover/nav:translate-x-0 transition-all duration-150 whitespace-nowrap z-50 flex items-center gap-1.5">
                         <span>{item.label}</span>
                         <span className="text-[10px] text-amber-400/80 bg-amber-400/10 px-1.5 py-0.5 rounded">Pronto</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              if (item.onClick) {
+                return (
+                  <div key={item.label} className="relative group/nav">
+                    <button
+                      type="button"
+                      onClick={item.onClick}
+                      className={`w-full relative flex items-center ${
+                        isCollapsed ? 'justify-center p-3' : 'justify-between px-3.5 py-2.5'
+                      } rounded-xl text-xs font-medium transition-colors duration-150 text-gray-400 hover:text-white hover:bg-[#5865F2]/15 hover:border-[#5865F2]/30 border border-transparent`}
+                    >
+                      <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'}`}>
+                        <Icon className="w-4 h-4 text-[#5865F2] group-hover/nav:scale-110 transition-transform" />
+                        {!isCollapsed && <span>{item.label}</span>}
+                      </div>
+                    </button>
+                    {isCollapsed && (
+                      <div className="absolute left-full top-1/2 -translate-y-1/2 ml-3 px-3 py-1.5 rounded-xl bg-[#141720] border border-[#5865F2]/30 text-white text-xs font-medium shadow-2xl opacity-0 -translate-x-2 pointer-events-none group-hover/nav:opacity-100 group-hover/nav:translate-x-0 transition-all duration-150 whitespace-nowrap z-50 flex items-center gap-2">
+                        <span className="font-semibold text-white">{item.label}</span>
                       </div>
                     )}
                   </div>
@@ -431,6 +457,12 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
         )}
         {children}
       </main>
+
+      {/* Global Studio Discord Settings Modal */}
+      <DiscordSettingsModal
+        isOpen={isDiscordSettingsOpen}
+        onClose={() => setIsDiscordSettingsOpen(false)}
+      />
     </div>
   );
 }

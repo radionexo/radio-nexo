@@ -165,4 +165,5 @@ export const INITIAL_STATION_STATE: StationState = {
   current_song_progress: 0,
   listeners_count: 1,
   air_time_seconds: 0,
+  discord_url: 'https://discord.gg/9AksstuAC',
 };

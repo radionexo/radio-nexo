@@ -47,6 +47,7 @@ export interface StationState {
   current_song_progress: number;
   listeners_count: number;
   air_time_seconds: number;
+  discord_url?: string;
   updated_at?: string;
 }
 

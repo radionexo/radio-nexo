@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS public.station_state (
     current_song_progress INTEGER DEFAULT 0,
     listeners_count INTEGER DEFAULT 1,
     air_time_seconds INTEGER DEFAULT 0,
+    discord_url TEXT DEFAULT 'https://discord.gg/9AksstuAC',
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
