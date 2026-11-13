@@ -187,7 +187,7 @@ export default function StudioPlaylistsPage() {
                     {selectedPlaylist.name}
                   </h2>
                   <p className="text-xs text-gray-300">
-                    {selectedPlaylist.description || 'Lista de reproducción curada para NEXO Radio.'}
+                    {selectedPlaylist.description || 'Lista de reproducción curada para Radio Nexo.'}
                   </p>
                   <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4 text-xs text-gray-400 pt-1">
                     <span>

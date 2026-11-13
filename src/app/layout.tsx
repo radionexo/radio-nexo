@@ -12,13 +12,13 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "NEXO RADIO — Donde Todo Conecta | En Vivo",
+  title: "RADIO NEXO — Donde Todo Conecta | En Vivo",
   description: "Radio online en vivo. Más que música, somos conexión. Escucha las mejores transmisiones musicales con locutores en vivo.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Nexo Radio",
+    title: "Radio Nexo",
   },
   icons: {
     icon: [
@@ -46,7 +46,7 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="Nexo Radio" />
+        <meta name="apple-mobile-web-app-title" content="Radio Nexo" />
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body className="min-h-full flex flex-col bg-[#090a0d] text-[#f3f4f6] selection:bg-[#e5b45f] selection:text-black">

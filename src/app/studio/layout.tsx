@@ -427,7 +427,7 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
                   NR
                 </div>
                 <div className="min-w-0">
-                  <h4 className="text-xs font-semibold text-white truncate">NEXO RADIO</h4>
+                  <h4 className="text-xs font-semibold text-white truncate">RADIO NEXO</h4>
                   <p className="text-[10px] text-gray-400">Locutor</p>
                 </div>
               </div>

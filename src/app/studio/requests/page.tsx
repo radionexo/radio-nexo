@@ -79,7 +79,7 @@ export default function StudioRequestsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white tracking-tight">Solicitudes y dedicatorias</h1>
           <p className="text-xs text-gray-400 mt-0.5">
-            Mensajes y pedidos de canciones enviados por los oyentes desde NEXO Radio.
+            Mensajes y pedidos de canciones enviados por los oyentes desde Radio Nexo.
           </p>
         </div>
 

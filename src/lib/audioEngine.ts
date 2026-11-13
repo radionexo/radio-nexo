@@ -798,7 +798,7 @@ class AudioEngine {
           targetSong = {
             id: state.current_song_id || 'restored-song',
             title: state.current_song_title,
-            artist: state.current_song_artist || 'NEXO Radio',
+            artist: state.current_song_artist || 'Radio Nexo',
             file_url: state.current_song_url || '/songs/summer.mp3',
             cover_url: state.current_song_cover || '/cover_default.webp',
             duration: state.current_song_duration || 180,

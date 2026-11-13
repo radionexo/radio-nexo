@@ -95,7 +95,7 @@ export default function PwaInstallPrompt() {
           <div className="relative w-11 h-11 rounded-xl overflow-hidden bg-black/60 border border-white/10 shrink-0 flex items-center justify-center">
             <Image
               src="/icon-192.png"
-              alt="NEXO Radio App"
+              alt="Radio Nexo App"
               width={44}
               height={44}
               className="object-contain"
@@ -103,7 +103,7 @@ export default function PwaInstallPrompt() {
           </div>
           <div className="flex flex-col">
             <span className="text-xs font-bold text-white flex items-center gap-1.5">
-              <span>Instalar Nexo Radio</span>
+              <span>Instalar Radio Nexo</span>
               <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-[#e5b45f]/20 text-[#e5b45f] border border-[#e5b45f]/30">
                 PWA
               </span>
@@ -150,7 +150,7 @@ export default function PwaInstallPrompt() {
               <div className="w-12 h-12 rounded-2xl bg-black border border-[#e5b45f]/30 flex items-center justify-center overflow-hidden shrink-0">
                 <Image
                   src="/icon-192.png"
-                  alt="NEXO Radio"
+                  alt="Radio Nexo"
                   width={48}
                   height={48}
                   className="object-contain"

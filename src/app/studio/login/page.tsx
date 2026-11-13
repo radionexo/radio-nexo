@@ -63,7 +63,7 @@ export default function StudioLoginPage() {
       localStorage.setItem('nexo_studio_session', JSON.stringify({
         email: email || 'admin@nexoradio.com',
         role: 'locutor',
-        name: 'NEXO RADIO',
+        name: 'RADIO NEXO',
       }));
     }
 
@@ -74,7 +74,7 @@ export default function StudioLoginPage() {
     localStorage.setItem('nexo_studio_session', JSON.stringify({
       email: 'locutor@nexoradio.com',
       role: 'locutor',
-      name: 'NEXO RADIO Locutor',
+      name: 'Locutor RADIO NEXO',
     }));
     router.replace('/studio');
   };
@@ -94,7 +94,7 @@ export default function StudioLoginPage() {
         <div className="relative z-10">
           <img
             src="/logo_nexo_radio.png"
-            alt="NEXO RADIO"
+            alt="RADIO NEXO"
             className="h-10 w-auto object-contain filter drop-shadow-[0_0_15px_rgba(229,180,95,0.4)]"
           />
         </div>

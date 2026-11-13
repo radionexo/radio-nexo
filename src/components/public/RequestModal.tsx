@@ -81,7 +81,7 @@ export default function RequestModal({ isOpen, onClose }: RequestModalProps) {
             </div>
             <div>
               <h3 className="text-lg font-semibold text-white">Pedir una canción</h3>
-              <p className="text-xs text-gray-400">Envía tu dedicatoria a la cabina de NEXO Radio</p>
+              <p className="text-xs text-gray-400">Envía tu dedicatoria a la cabina de Radio Nexo</p>
             </div>
           </div>
           <button

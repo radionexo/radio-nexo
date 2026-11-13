@@ -248,7 +248,7 @@ export function LiveChatView({ isDj = false, onClose, isCompact = false, hideHea
                 </span>
               </div>
               <p className="text-[11px] text-gray-400">
-                {isDj ? 'Canal Oficial de Cabina' : 'Comunidad NEXO Radio'}
+                {isDj ? 'Canal Oficial de Cabina' : 'Comunidad Radio Nexo'}
               </p>
             </div>
           </div>

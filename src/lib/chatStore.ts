@@ -25,7 +25,7 @@ const DEFAULT_MESSAGES: ChatMessage[] = [
   {
     id: 'seed-1',
     user_name: '🎧 NEXO DJ',
-    text: '¡Bienvenidos a la transmisión en vivo de NEXO Radio! ¿Desde dónde nos escuchas?',
+    text: '¡Bienvenidos a la transmisión en vivo de Radio Nexo! ¿Desde dónde nos escuchas?',
     created_at: new Date(Date.now() - 300000).toISOString(),
     is_dj: true,
   },
@@ -46,7 +46,7 @@ const DEFAULT_MESSAGES: ChatMessage[] = [
   {
     id: 'seed-4',
     user_name: 'Valentina P.',
-    text: 'Saludos a toda la cabina de NEXO Radio ❤️✨',
+    text: 'Saludos a toda la cabina de Radio Nexo ❤️✨',
     created_at: new Date(Date.now() - 40000).toISOString(),
     is_dj: false,
   },

@@ -131,7 +131,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       if (!activeSong && stationState.current_song_title) {
         activeSong = await radioStore.addSong({
           title: stationState.current_song_title,
-          artist: stationState.current_song_artist || 'NEXO Radio',
+          artist: stationState.current_song_artist || 'Radio Nexo',
           genre: 'Pop',
           file_url: stationState.current_song_url || '/songs/summer.mp3',
           cover_url: stationState.current_song_cover || '/cover_default.webp',
@@ -609,7 +609,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
             <span className="relative inline-flex rounded-full h-2 w-2 bg-[#e5b45f]"></span>
           </span>
           <span className="text-[11px] font-semibold tracking-wider text-[#e5b45f] uppercase">
-            EN VIVO · NEXO RADIO
+            EN VIVO · RADIO NEXO
           </span>
         </div>
 
@@ -618,7 +618,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
           type="button"
           onClick={onOpenRequestModal}
           className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full border border-[#e5b45f]/40 bg-gradient-to-r from-[#e5b45f]/20 to-[#f3c87a]/20 hover:from-[#e5b45f]/30 hover:to-[#f3c87a]/30 text-white hover:text-[#e5b45f] text-[11px] font-semibold tracking-wide transition-all transform active:scale-95 shadow-md shadow-[#e5b45f]/10 cursor-pointer"
-          title="Pedir una canción a la cabina de NEXO Radio"
+          title="Pedir una canción a la cabina de Radio Nexo"
           aria-label="Pedir canción"
         >
           <Music2 className="w-3 h-3 text-[#e5b45f]" />

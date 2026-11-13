@@ -532,7 +532,7 @@ class RadioStore {
       } else {
         this.updateStationState({
           current_song_id: '',
-          current_song_title: 'Nexo Radio',
+          current_song_title: 'Radio Nexo',
           current_song_artist: 'En Vivo',
           current_song_cover: '/cover_default.webp',
           current_song_url: '',

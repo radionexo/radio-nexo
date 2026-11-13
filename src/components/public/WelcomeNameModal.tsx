@@ -105,7 +105,7 @@ export default function WelcomeNameModal({ isOpen, onClose }: WelcomeNameModalPr
         <div className="flex items-center gap-1.5 mb-1.5">
           <Sparkles className="w-4 h-4 text-[#e5b45f]" />
           <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">
-            ¡Bienvenido a NEXO RADIO!
+            ¡Bienvenido a RADIO NEXO!
           </h2>
           <Sparkles className="w-4 h-4 text-[#e5b45f]" />
         </div>

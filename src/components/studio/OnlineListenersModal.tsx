@@ -68,7 +68,7 @@ export function OnlineListenersModal({
                 </span>
               </div>
               <p className="text-xs text-gray-400">
-                Personas sintonizando la señal de NEXO Radio ahora
+                Personas sintonizando la señal de Radio Nexo ahora
               </p>
             </div>
           </div>

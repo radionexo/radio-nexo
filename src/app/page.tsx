@@ -85,7 +85,7 @@ export default function NexoRadioPublicPage() {
           </button>
           <img
             src="/logo_nexo_radio.png"
-            alt="NEXO RADIO"
+            alt="RADIO NEXO"
             className="h-8 w-auto object-contain filter drop-shadow-[0_0_8px_rgba(229,180,95,0.4)]"
           />
         </div>
@@ -210,7 +210,7 @@ export default function NexoRadioPublicPage() {
             <div className="flex items-center gap-3 mb-8">
               <img
                 src="/logo_nexo_radio.png"
-                alt="NEXO RADIO"
+                alt="RADIO NEXO"
                 className="h-9 w-auto object-contain filter drop-shadow-[0_0_12px_rgba(229,180,95,0.4)]"
               />
             </div>

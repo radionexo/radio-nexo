@@ -357,7 +357,7 @@ export default function StudioLivePage() {
           <div>
             <span className="text-xs text-gray-400 font-medium">Locutor actual</span>
             <div className="flex items-center justify-between mt-1">
-              <span className="text-xs font-bold text-white">NEXO RADIO</span>
+              <span className="text-xs font-bold text-white">RADIO NEXO</span>
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#e5b45f]/20 text-[#e5b45f] font-semibold">
                 Al aire ahora
               </span>

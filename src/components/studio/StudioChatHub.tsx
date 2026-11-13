@@ -226,7 +226,7 @@ export function StudioChatHub({
   };
 
   const QUICK_DJ_SHOUTOUTS = [
-    '🎙️ ¡En vivo por NEXO Radio!',
+    '🎙️ ¡En vivo por Radio Nexo!',
     '🔥 ¡Gracias por la sintonía!',
     '🎵 ¡Canción anotada para la cola!',
     '❤️ ¡Un gran abrazo a la cabina!',
@@ -415,7 +415,7 @@ export function StudioChatHub({
                 <Sparkles className="w-10 h-10 text-[#e5b45f] mb-3 opacity-60 animate-pulse" />
                 <p className="text-sm font-bold text-white">Chat de Cabina Activo</p>
                 <p className="text-xs text-gray-400 mt-1 max-w-xs">
-                  Aquí verás los mensajes en vivo de los oyentes conectados a NEXO Radio.
+                  Aquí verás los mensajes en vivo de los oyentes conectados a Radio Nexo.
                 </p>
               </div>
             ) : (
