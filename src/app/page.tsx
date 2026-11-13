@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import PublicPlayer from '@/components/public/PublicPlayer';
 import RequestModal from '@/components/public/RequestModal';
+import WelcomeNameModal from '@/components/public/WelcomeNameModal';
 import { LiveChatView, LiveChatDrawer } from '@/components/public/LiveChat';
 import ScheduleView, { ScheduleDrawer } from '@/components/public/ScheduleView';
 import { radioStore } from '@/lib/radioStore';
@@ -36,6 +37,14 @@ export default function NexoRadioPublicPage() {
   const [desktopPanelTab, setDesktopPanelTab] = useState<'chat' | 'schedule'>('chat');
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isWelcomeModalOpen, setIsWelcomeModalOpen] = useState(false);
+
+  useEffect(() => {
+    // When visitors enter the website on mobile or desktop, ask for their name if not set yet
+    if (!chatStore.hasCustomName()) {
+      setIsWelcomeModalOpen(true);
+    }
+  }, []);
 
   useEffect(() => {
     const update = async () => {
@@ -584,6 +593,12 @@ export default function NexoRadioPublicPage() {
       <RequestModal
         isOpen={isRequestModalOpen}
         onClose={() => setIsRequestModalOpen(false)}
+      />
+
+      {/* Welcome Name Modal (Mobile & Desktop) */}
+      <WelcomeNameModal
+        isOpen={isWelcomeModalOpen}
+        onClose={() => setIsWelcomeModalOpen(false)}
       />
     </div>
   );

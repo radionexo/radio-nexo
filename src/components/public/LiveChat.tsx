@@ -66,12 +66,6 @@ export function LiveChatView({ isDj = false, onClose, isCompact = false, hideHea
     setUserName(currentName);
     setCurrentUserId(chatStore.getUserId());
 
-    // Prompt immediately for nickname when entering chat if not configured yet
-    if (!isDj && !chatStore.hasCustomName()) {
-      setTempName(currentName.startsWith('Oyente #') ? '' : currentName);
-      setShowNameModal(true);
-    }
-
     const unsubscribe = chatStore.subscribe(() => {
       setMessages(chatStore.getMessages());
       setUserName(chatStore.getUserName());
