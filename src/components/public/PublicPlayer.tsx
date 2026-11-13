@@ -99,6 +99,12 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
   // Stream URL from Render or custom environment
   const LIVE_STREAM_URL = process.env.NEXT_PUBLIC_STREAM_URL || 'https://nexo-radio-bridge-axxt.onrender.com/live';
 
+  const checkIfLiveStream = (src?: string | null) => {
+    if (!src) return false;
+    if (LIVE_STREAM_URL && src.includes(LIVE_STREAM_URL.split('?')[0])) return true;
+    return src.includes('live') || src.includes('onrender.com');
+  };
+
   // Dedicated iOS-compatible direct track playback coordinator
   const playDirectTrack = async (targetSongUrl: string, syncTime: number) => {
     if (!audioRef.current) return;
@@ -207,9 +213,29 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       setIsLoading(true);
     });
 
-    // Handle track completion by requesting next song in state
+    // Handle track completion or live stream recycle
     audio.addEventListener('ended', async () => {
+      const currentSrc = audio.src || '';
+      const isLive = checkIfLiveStream(currentSrc);
       const current = radioStore.getStationState();
+
+      if (isLive) {
+        // Live stream socket was recycled by the server; auto-reconnect with fresh timestamp
+        console.log('[Player Watchdog] Live stream connection recycled, auto-reconnecting...');
+        setTimeout(() => {
+          if (audioRef.current) {
+            audioRef.current.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
+            audioRef.current.play().catch(() => {
+              const syncTime = getLiveSongProgress(current);
+              const fallbackUrl = current.current_song_url || '/songs/summer.mp3';
+              playDirectTrack(fallbackUrl, syncTime).catch(console.warn);
+            });
+          }
+        }, 600);
+        return;
+      }
+
+      // Direct track completed -> advance to next track
       const songs = await radioStore.getSongs();
       const nextSong = songs.find(
         (s) =>
@@ -224,7 +250,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     audio.addEventListener('error', (e) => {
       console.warn('Audio connection notice, evaluating fallback:', e);
       const currentSrc = audio.src || '';
-      const isLiveStream = currentSrc.includes('live') || currentSrc.includes('onrender.com');
+      const isLiveStream = checkIfLiveStream(currentSrc);
       const current = radioStore.getStationState();
       const syncTime = getLiveSongProgress(current);
 
@@ -239,7 +265,40 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       }
     });
 
+    // Active Watchdog to detect stalled live streams and auto-recover playback
+    let lastAudioTime = -1;
+    let freezeTicks = 0;
+
+    const watchdog = setInterval(() => {
+      if (!audioRef.current) return;
+      const a = audioRef.current;
+      const isLive = checkIfLiveStream(a.src);
+
+      if (isLive && !a.paused) {
+        if (lastAudioTime >= 0 && Math.abs(a.currentTime - lastAudioTime) < 0.2) {
+          freezeTicks++;
+          if (freezeTicks >= 3) {
+            console.warn('[Player Watchdog] Live stream stalled, auto-recovering...');
+            freezeTicks = 0;
+            a.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
+            a.play().catch(() => {
+              const current = radioStore.getStationState();
+              const syncTime = getLiveSongProgress(current);
+              playDirectTrack(current.current_song_url || '/songs/summer.mp3', syncTime).catch(() => {});
+            });
+          }
+        } else {
+          freezeTicks = 0;
+        }
+        lastAudioTime = a.currentTime;
+      } else {
+        lastAudioTime = -1;
+        freezeTicks = 0;
+      }
+    }, 2500);
+
     return () => {
+      clearInterval(watchdog);
       audio.pause();
       audio.src = '';
     };
@@ -256,7 +315,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
   useEffect(() => {
     if (isPlaying && audioRef.current) {
       const currentSrc = audioRef.current.src || '';
-      const isLiveStream = currentSrc.includes('live') || currentSrc.includes('onrender.com');
+      const isLiveStream = checkIfLiveStream(currentSrc);
       if (!isLiveStream) {
         const liveSec = getLiveSongProgress(stationState);
         if (liveSec > 0 && Math.abs(audioRef.current.currentTime - liveSec) > 5) {
@@ -273,7 +332,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible' && isPlaying && audioRef.current) {
         const currentSrc = audioRef.current.src || '';
-        const isLiveStream = currentSrc.includes('live') || currentSrc.includes('onrender.com');
+        const isLiveStream = checkIfLiveStream(currentSrc);
         if (!isLiveStream) {
           const liveSec = getLiveSongProgress(radioStore.getStationState());
           if (liveSec > 0 && Math.abs(audioRef.current.currentTime - liveSec) > 4) {
@@ -293,7 +352,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
   useEffect(() => {
     if (isPlaying && audioRef.current && stationState.is_mic_active && LIVE_STREAM_URL) {
       const currentSrc = audioRef.current.src || '';
-      const isLiveStream = currentSrc.includes('live') || currentSrc.includes('onrender.com');
+      const isLiveStream = checkIfLiveStream(currentSrc);
       if (!isLiveStream) {
         const audio = audioRef.current;
         audio.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
