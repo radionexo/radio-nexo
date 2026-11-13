@@ -62,10 +62,10 @@ export default function NexoRadioPublicPage() {
     <div className="relative h-screen bg-[#07080b] text-[#f3f4f6] flex flex-col font-sans overflow-hidden">
       {/* Background Graphic */}
       <div
-        className="fixed inset-0 bg-cover bg-center pointer-events-none opacity-45 mix-blend-screen"
-        style={{ backgroundImage: `url('/bg_nexo_radio.webp')` }}
+        className="fixed inset-0 bg-cover bg-center bg-no-repeat pointer-events-none"
+        style={{ backgroundImage: `url('/fondo.png')` }}
       />
-      <div className="fixed inset-0 bg-gradient-to-b from-[#07080b]/70 via-[#07080b]/85 to-[#07080b] pointer-events-none" />
+      <div className="fixed inset-0 bg-gradient-to-b from-[#07080b]/75 via-[#07080b]/50 to-[#07080b]/85 pointer-events-none" />
 
       {/* Top Header */}
       <header className="relative z-30 flex items-center justify-between px-4 sm:px-6 py-3 border-b border-white/5 glass-panel-subtle shrink-0">
