@@ -48,6 +48,7 @@ class AudioEngine {
   private airTimeSeconds = 0;
   private airTimerInterval: NodeJS.Timeout | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  private broadcastReconnectTimeout: NodeJS.Timeout | null = null;
 
   private onStateChangeCallbacks: Set<() => void> = new Set();
   private onLevelCallbacks: Set<(levels: AudioLevels) => void> = new Set();
@@ -653,19 +654,47 @@ class AudioEngine {
     this.notify();
   }
 
-  // --- BROADCAST TRANSMISSION TO BRIDGE / ICECAST ---
+  // --- BROADCAST TRANSMISSION TO BRIDGE / ICECAST (AUTO-HEALING) ---
   public startBroadcasting() {
     this.init();
     if (!this.masterDestination) return;
 
     if (this.isBroadcasting) return;
 
+    this.isBroadcasting = true;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nexo_broadcast_enabled', 'true');
+    }
+
+    // Start on-air broadcast timer (preserving air time across refresh)
+    if (this.airTimerInterval) {
+      clearInterval(this.airTimerInterval);
+    }
+    this.airTimeSeconds = this.airTimeSeconds || 0;
+    this.airTimerInterval = setInterval(() => {
+      this.airTimeSeconds++;
+      radioStore.updateStationState({
+        air_time_seconds: this.airTimeSeconds,
+      });
+      this.notify();
+    }, 1000);
+
+    radioStore.updateStationState({ is_live: true });
+    this.persistSession();
+    this.notify();
+
+    this.launchBroadcastStream();
+  }
+
+  private launchBroadcastStream() {
+    if (!this.masterDestination || !this.isBroadcasting) return;
+
     try {
       const stream = this.masterDestination.stream;
-      const mimeType = MediaRecorder.isTypeSupported('audio/mp4')
-        ? 'audio/mp4'
-        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
         : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
         ? 'audio/ogg;codecs=opus'
         : '';
@@ -683,7 +712,7 @@ class AudioEngine {
         this.broadcastWs.binaryType = 'arraybuffer';
 
         this.broadcastWs.onopen = () => {
-          console.log('Connected to NEXO Audio Bridge Server at', wsUrl);
+          console.log('[Broadcast] Conectado exitosamente al servidor puente en', wsUrl);
           while (initialChunkQueue.length > 0) {
             const chunk = initialChunkQueue.shift();
             if (chunk) this.broadcastWs?.send(chunk);
@@ -700,8 +729,22 @@ class AudioEngine {
           }, 15000);
         };
 
+        // Automatic self-healing: if WebSocket closes while on the air, restart pipeline automatically
+        this.broadcastWs.onclose = () => {
+          console.warn('[Broadcast Watchdog] Conexión WebSocket cerrada con el puente.');
+          if (this.isBroadcasting) {
+            console.log('[Broadcast Watchdog] Reconexión automática en curso (sin necesidad de reiniciar manualmente)...');
+            if (this.broadcastReconnectTimeout) clearTimeout(this.broadcastReconnectTimeout);
+            this.broadcastReconnectTimeout = setTimeout(() => {
+              if (this.isBroadcasting) {
+                this.restartBroadcasterPipeline();
+              }
+            }, 2000);
+          }
+        };
+
         this.broadcastWs.onerror = (e) => {
-          console.warn('Bridge server error notice:', e);
+          console.warn('[Broadcast] Error en WebSocket del puente:', e);
         };
       } catch (wsErr) {
         console.warn('Could not establish WebSocket to bridge:', wsErr);
@@ -712,46 +755,67 @@ class AudioEngine {
           const buffer = await e.data.arrayBuffer();
           if (this.broadcastWs && this.broadcastWs.readyState === WebSocket.OPEN) {
             this.broadcastWs.send(buffer);
-          } else {
+          } else if (initialChunkQueue.length < 5) {
+            // Keep at most 5 chunks (header + fresh start) to prevent stale lag buffer
             initialChunkQueue.push(buffer);
           }
         }
       };
 
+      this.mediaRecorder.onerror = (e) => {
+        console.warn('[Broadcast Watchdog] Error en MediaRecorder:', e);
+        if (this.isBroadcasting) {
+          this.restartBroadcasterPipeline();
+        }
+      };
+
       // Emit chunks every 600ms for stable low latency
       this.mediaRecorder.start(600);
-      this.isBroadcasting = true;
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('nexo_broadcast_enabled', 'true');
-      }
-
-      // Start on-air broadcast timer (preserving air time across refresh)
-      if (this.airTimerInterval) {
-        clearInterval(this.airTimerInterval);
-      }
-      this.airTimeSeconds = this.airTimeSeconds || 0;
-      this.airTimerInterval = setInterval(() => {
-        this.airTimeSeconds++;
-        radioStore.updateStationState({
-          air_time_seconds: this.airTimeSeconds,
-        });
-        this.notify();
-      }, 1000);
-
-      radioStore.updateStationState({ is_live: true });
-      this.persistSession();
-      this.notify();
     } catch (err) {
       console.error('Failed to start media recorder / broadcast:', err);
+      if (this.isBroadcasting) {
+        if (this.broadcastReconnectTimeout) clearTimeout(this.broadcastReconnectTimeout);
+        this.broadcastReconnectTimeout = setTimeout(() => {
+          if (this.isBroadcasting) this.restartBroadcasterPipeline();
+        }, 3000);
+      }
     }
   }
 
+  public restartBroadcasterPipeline() {
+    if (!this.isBroadcasting) return;
+    console.log('[Broadcast Watchdog] Auto-recuperando transmisión (parando y reiniciando pipeline de forma transparente)...');
+
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+      try { this.mediaRecorder.stop(); } catch {}
+    }
+    this.mediaRecorder = null;
+
+    if (this.broadcastWs) {
+      try { this.broadcastWs.close(); } catch {}
+      this.broadcastWs = null;
+    }
+
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+
+    this.launchBroadcastStream();
+  }
+
   public stopBroadcasting() {
+    this.isBroadcasting = false;
+    if (this.broadcastReconnectTimeout) {
+      clearTimeout(this.broadcastReconnectTimeout);
+      this.broadcastReconnectTimeout = null;
+    }
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
       try {
         this.mediaRecorder.stop();
       } catch {}
     }
+    this.mediaRecorder = null;
     if (this.broadcastWs) {
       try {
         this.broadcastWs.close();
@@ -766,7 +830,6 @@ class AudioEngine {
       clearInterval(this.airTimerInterval);
       this.airTimerInterval = null;
     }
-    this.isBroadcasting = false;
     this.airTimeSeconds = 0;
     if (typeof window !== 'undefined') {
       localStorage.setItem('nexo_broadcast_enabled', 'false');
