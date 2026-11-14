@@ -373,15 +373,9 @@ export default function NexoRadioPublicPage() {
                       </svg>
                     </div>
                     <div>
-                      <div className="flex items-center justify-center sm:justify-start gap-2 mb-0.5">
-                        <h3 className="text-xs sm:text-sm font-bold text-white tracking-wide">
-                          ¡Únete a la Comunidad Oficial en Discord!
-                        </h3>
-                        <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#5865F2]/20 text-[#8ea1ff] border border-[#5865F2]/40">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                          Comunidad activa
-                        </span>
-                      </div>
+                      <h3 className="text-xs sm:text-sm font-bold text-white tracking-wide mb-0.5">
+                        ¡Únete a la Comunidad Oficial en Discord!
+                      </h3>
                       <p className="text-[11px] text-gray-300 leading-tight max-w-lg">
                         Conecta con los locutores, participa en dinámicas exclusivas, pide temas y comparte con otros oyentes 24/7.
                       </p>
