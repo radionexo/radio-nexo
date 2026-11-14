@@ -47,6 +47,7 @@ class AudioEngine {
   private isPlaying = false;
   private airTimeSeconds = 0;
   private airTimerInterval: NodeJS.Timeout | null = null;
+  private heartbeatInterval: NodeJS.Timeout | null = null;
 
   private onStateChangeCallbacks: Set<() => void> = new Set();
   private onLevelCallbacks: Set<(levels: AudioLevels) => void> = new Set();
@@ -132,6 +133,7 @@ class AudioEngine {
 
       // Audio element listeners
       this.audioElement.addEventListener('error', () => {
+        console.warn('[AudioEngine Watchdog] Error en elemento de audio, auto-recuperando vía nextTrack...');
         if (this.currentSong && typeof window !== 'undefined') {
           window.dispatchEvent(
             new CustomEvent('nexo_audio_playback_failed', {
@@ -142,6 +144,10 @@ class AudioEngine {
             })
           );
         }
+        // Auto-recover so the station NEVER halts playback on corrupted/broken track
+        setTimeout(() => {
+          this.nextTrack();
+        }, 500);
       });
 
       this.audioElement.addEventListener('ended', () => {
@@ -319,12 +325,39 @@ class AudioEngine {
     this.notify();
   }
 
-  public nextTrack() {
+  public async nextTrack() {
     const queue = radioStore.getQueue();
     if (queue.length > 0) {
       const nextSong = queue[0];
       radioStore.removeFromQueue(0);
-      this.playSong(nextSong);
+      await this.playSong(nextSong);
+      return;
+    }
+
+    // AutoDJ 24/7 continuous rotation:
+    // When queue is empty, automatically advance to another song from library
+    try {
+      const songs = await radioStore.getSongs();
+      if (songs && songs.length > 0) {
+        const currentIndex = this.currentSong
+          ? songs.findIndex((s) => s.id === this.currentSong?.id)
+          : -1;
+        const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % songs.length : 0;
+        await this.playSong(songs[nextIndex]);
+        return;
+      }
+    } catch (err) {
+      console.warn('[AudioEngine AutoDJ] Error seleccionando siguiente canción:', err);
+    }
+
+    // Emergency local fallback to ensure audio never stops
+    if (this.audioElement) {
+      this.audioElement.currentTime = 0;
+      try {
+        await this.audioElement.play();
+        this.isPlaying = true;
+        this.notify();
+      } catch {}
     }
   }
 
@@ -655,6 +688,16 @@ class AudioEngine {
             const chunk = initialChunkQueue.shift();
             if (chunk) this.broadcastWs?.send(chunk);
           }
+
+          // Keepalive heartbeat ping every 15s to keep proxy/cloud connection active
+          if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+          this.heartbeatInterval = setInterval(() => {
+            if (this.broadcastWs && this.broadcastWs.readyState === WebSocket.OPEN) {
+              try {
+                this.broadcastWs.send(new Uint8Array([1, 2, 3, 4]));
+              } catch {}
+            }
+          }, 15000);
         };
 
         this.broadcastWs.onerror = (e) => {
@@ -714,6 +757,10 @@ class AudioEngine {
         this.broadcastWs.close();
       } catch {}
       this.broadcastWs = null;
+    }
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
     }
     if (this.airTimerInterval) {
       clearInterval(this.airTimerInterval);

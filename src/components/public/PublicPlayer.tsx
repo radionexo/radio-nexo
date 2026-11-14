@@ -180,6 +180,12 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       audio.preload = 'auto';
     }
 
+    if (syncTime <= 0) {
+      try {
+        audio.currentTime = 0;
+      } catch {}
+    }
+
     audio.volume = isMuted ? 0 : (volume || 0.85);
 
     // Multi-stage seek coordinator for iOS Safari:
@@ -276,6 +282,13 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       setIsLoading(true);
     });
 
+    audio.addEventListener('stalled', () => {
+      console.warn('[Player Watchdog] Audio stalled, nudging buffer...');
+      if (isPlaying && audio.paused) {
+        audio.play().catch(console.warn);
+      }
+    });
+
     // Handle track completion or live stream recycle
     audio.addEventListener('ended', async () => {
       const currentSrc = audio.src || '';
@@ -298,16 +311,38 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
         return;
       }
 
-      // Direct track completed -> advance to next track
-      const songs = await radioStore.getSongs();
-      const nextSong = songs.find(
-        (s) =>
-          (current.current_song_id && s.id === current.current_song_id) ||
-          (current.current_song_title && s.title.toLowerCase() === current.current_song_title.toLowerCase())
-      ) || songs[0];
-      const nextUrl = current.current_song_url || nextSong?.file_url || '/songs/summer.mp3';
-      const syncTime = getLiveSongProgress(current);
-      playDirectTrack(nextUrl, syncTime).catch(console.warn);
+      // Direct track completed -> advance smoothly to next track in rotation (24/7 non-stop)
+      try {
+        const songs = await radioStore.getSongs();
+        if (songs && songs.length > 0) {
+          const currentIndex = songs.findIndex(
+            (s) =>
+              (current.current_song_id && s.id === current.current_song_id) ||
+              (current.current_song_title && s.title.toLowerCase() === current.current_song_title.toLowerCase())
+          );
+          const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % songs.length : 0;
+          const nextSong = songs[nextIndex] || songs[0];
+          const nextUrl = nextSong.file_url || '/songs/summer.mp3';
+
+          // Update station state so listener UI updates title, artist and cover seamlessly
+          radioStore.updateStationState({
+            current_song_id: nextSong.id,
+            current_song_title: nextSong.title,
+            current_song_artist: nextSong.artist,
+            current_song_cover: nextSong.cover_url,
+            current_song_url: nextUrl,
+            current_song_duration: nextSong.duration,
+            current_song_progress: 0,
+          });
+
+          await playDirectTrack(nextUrl, 0);
+          return;
+        }
+      } catch (err) {
+        console.warn('Error advancing direct track:', err);
+      }
+
+      playDirectTrack('/songs/summer.mp3', 0).catch(console.warn);
     });
 
     audio.addEventListener('error', (e) => {
@@ -315,16 +350,15 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       const currentSrc = audio.src || '';
       const isLiveStream = checkIfLiveStream(currentSrc);
       const current = radioStore.getStationState();
-      const syncTime = getLiveSongProgress(current);
 
       if (isLiveStream) {
         // Live stream failed (e.g. on iOS Safari or Render offline) -> Seamlessly fall back to direct song at current position
+        const syncTime = getLiveSongProgress(current);
         const targetUrl = current.current_song_url || '/songs/summer.mp3';
         playDirectTrack(targetUrl, syncTime).catch(console.warn);
-      } else if (!currentSrc.endsWith('/songs/summer.mp3')) {
-        playDirectTrack('/songs/summer.mp3', syncTime).catch(console.warn);
       } else {
-        setIsLoading(false);
+        const fallback = currentSrc.includes('summer') ? '/songs/flowers.mp3' : '/songs/summer.mp3';
+        playDirectTrack(fallback, 0).catch(console.warn);
       }
     });
 
@@ -341,21 +375,46 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     }
   }, [volume, isMuted]);
 
-  // Continuous resynchronization for direct playback
+  // Gentle resynchronization for direct playback:
+  // Only sync if track changes or on massive drift (> 15s), avoiding audio micro-stutters during normal playback
   useEffect(() => {
     if (isPlaying && audioRef.current) {
       const currentSrc = audioRef.current.src || '';
       const isLiveStream = checkIfLiveStream(currentSrc);
       if (!isLiveStream) {
         const liveSec = getLiveSongProgress(stationState);
-        if (liveSec > 0 && Math.abs(audioRef.current.currentTime - liveSec) > 5) {
+        if (liveSec > 0 && Math.abs(audioRef.current.currentTime - liveSec) > 15) {
           try {
             audioRef.current.currentTime = liveSec;
           } catch {}
         }
       }
     }
-  }, [stationState.current_song_progress, stationState.updated_at, isPlaying]);
+  }, [stationState.current_song_id, stationState.updated_at, isPlaying]);
+
+  // Active Playback Watchdog: Ensures audio keeps playing whenever isPlaying is active
+  useEffect(() => {
+    if (!isPlaying) return;
+
+    const interval = setInterval(() => {
+      const audio = audioRef.current;
+      if (!audio) return;
+
+      // If user intended to play, but the audio element paused unexpectedly (OS sleep, audio focus change, etc.)
+      if (audio.paused && !audio.ended && isPlaying && !isLoading) {
+        console.warn('[Player Watchdog] Detected unexpected pause during playback, resuming...');
+        audio.play().catch((err) => {
+          console.warn('[Player Watchdog] Auto-resume error, falling back to direct track:', err);
+          const current = radioStore.getStationState();
+          const syncTime = getLiveSongProgress(current);
+          const fallbackUrl = current.current_song_url || '/songs/summer.mp3';
+          playDirectTrack(fallbackUrl, syncTime).catch(console.warn);
+        });
+      }
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [isPlaying, isLoading]);
 
   // Screen unlock / VisibilityChange resync for mobile devices (iPhone Safari)
   useEffect(() => {
@@ -417,9 +476,8 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       }
       const syncTime = getLiveSongProgress(stationState);
 
-      // Primary: Connect to the live radio stream from Render (Broadcasts DJ voice + music mixed)
-      // Works across Android, iPhone (iOS 15+) and Desktop
-      if (LIVE_STREAM_URL) {
+      // Primary: Connect to the live radio stream from Render if broadcast or mic is active
+      if (LIVE_STREAM_URL && (stationState.is_live || stationState.is_mic_active)) {
         try {
           audioRef.current.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
           audioRef.current.volume = isMuted ? 0 : (volume || 0.85);

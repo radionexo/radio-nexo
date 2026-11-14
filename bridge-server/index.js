@@ -188,6 +188,9 @@ wss.on('connection', (ws) => {
   setupIcecastUpstream();
 
   ws.on('message', (data) => {
+    // Ignore small keepalive heartbeat pings (< 8 bytes)
+    if (data.length < 8) return;
+
     // Save the first chunk as container header and detect format
     if (!headerChunk) {
       headerChunk = Buffer.from(data);
