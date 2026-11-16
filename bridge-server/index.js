@@ -108,10 +108,18 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Icecast Source Endpoint (Virtual DJ, Mixxx, BUTT, OBS, etc.)
-  if ((req.method === 'SOURCE' || req.method === 'PUT') && (parsed.pathname === '/live' || parsed.pathname === '/broadcast' || parsed.pathname === '/stream')) {
+  // Icecast / Shoutcast Source Endpoint (Virtual DJ, Mixxx, BUTT, OBS, etc.)
+  const isSourceMount =
+    parsed.pathname === '/live' ||
+    parsed.pathname === '/live.mp3' ||
+    parsed.pathname === '/broadcast' ||
+    parsed.pathname === '/stream' ||
+    parsed.pathname === '/stream.mp3' ||
+    parsed.pathname === '/';
+
+  if ((req.method === 'SOURCE' || req.method === 'PUT' || req.method === 'POST') && isSourceMount) {
     const authHeader = req.headers['authorization'] || '';
-    const icePassword = req.headers['ice-password'] || '';
+    const icePassword = req.headers['ice-password'] || req.headers['icy-password'] || parsed.query?.password || '';
     const expectedPassword = process.env.BRIDGE_PASSWORD || 'nexoradio2026';
 
     let authorized = true;
@@ -120,7 +128,8 @@ const server = http.createServer((req, res) => {
         authorized = false;
       } else if (authHeader.startsWith('Basic ')) {
         const decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf-8');
-        const [_, pwd] = decoded.split(':');
+        const parts = decoded.split(':');
+        const pwd = parts.length > 1 ? parts[1] : parts[0];
         if (pwd && pwd !== expectedPassword) authorized = false;
       }
     }
@@ -141,6 +150,9 @@ const server = http.createServer((req, res) => {
       'Content-Type': 'text/plain',
       'Connection': 'keep-alive',
     });
+    if (typeof res.flushHeaders === 'function') {
+      res.flushHeaders();
+    }
 
     req.on('data', (chunk) => {
       if (!headerChunk) {
