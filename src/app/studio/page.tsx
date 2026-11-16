@@ -397,18 +397,25 @@ export default function StudioDashboardPage() {
             >
               <Mic className="w-6 h-6 mb-0.5" />
               <span className="text-[10px] font-black tracking-wider uppercase">
-                {engineState.isMicOnAir ? 'SALIR AL AIRE' : 'ENTRAR AL AIRE'}
+                {engineState.isMicOnAir ? 'SALIR DEL AIRE' : 'ENTRAR AL AIRE'}
               </span>
             </button>
 
             <div className="relative z-10 mt-2.5 space-y-0.5">
-              <h4 className="text-xs font-bold text-white">
-                {engineState.isMicOnAir ? 'Micrófono al aire' : 'Micrófono apagado'}
+              <h4 className="text-xs font-bold text-white flex items-center justify-center gap-1.5">
+                {engineState.isMicOnAir ? (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                    <span className="text-rose-400">DJ EN VIVO (Al Aire)</span>
+                  </>
+                ) : (
+                  'Modo Música Continua'
+                )}
               </h4>
-              <p className="text-[11px] text-gray-400 max-w-[190px] leading-tight line-clamp-2">
+              <p className="text-[11px] text-gray-400 max-w-[210px] leading-tight">
                 {engineState.isMicOnAir
-                  ? 'Música atenuada al 15%.'
-                  : 'Ducking automático al hablar.'}
+                  ? 'Voz / Virtual DJ activo. En la web se muestra "DJ EN VIVO".'
+                  : 'Transmitiendo canciones. En la web se muestra el nombre del tema.'}
               </p>
 
               <button

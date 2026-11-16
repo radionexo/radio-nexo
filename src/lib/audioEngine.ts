@@ -476,7 +476,7 @@ class AudioEngine {
           echoCancellation: this.micMode === 'standard',
           noiseSuppression: this.micMode === 'standard',
           autoGainControl: false,
-          channelCount: { ideal: 1 },
+          channelCount: { ideal: 2 },
           sampleRate: { ideal: 48000 },
         };
 
