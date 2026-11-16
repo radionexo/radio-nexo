@@ -12,7 +12,7 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 }
 
 let headerChunk = null;
-let headerContentType = 'audio/mp4';
+let headerContentType = 'audio/webm; codecs=opus';
 const listeners = new Set();
 let isBroadcasting = false;
 let broadcasterSocket = null;
@@ -260,17 +260,22 @@ const server = http.createServer((req, res) => {
 
     res.writeHead(200, {
       'Content-Type': headerContentType,
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Cache-Control': 'no-cache, no-store, no-transform, must-revalidate',
       'Pragma': 'no-cache',
       'Connection': 'keep-alive',
       'Transfer-Encoding': 'chunked',
       'X-Content-Type-Options': 'nosniff',
+      'X-Accel-Buffering': 'no',
       'Access-Control-Allow-Origin': '*',
       'icy-name': 'RADIO NEXO - En Vivo',
       'icy-genre': 'Hits / Pop / Electronic',
       'icy-pub': '1',
       'icy-br': '128',
     });
+
+    if (typeof res.flushHeaders === 'function') {
+      res.flushHeaders();
+    }
 
     listeners.add(res);
     console.log(`[Stream] Nuevo oyente conectado. Total oyentes: ${listeners.size}`);

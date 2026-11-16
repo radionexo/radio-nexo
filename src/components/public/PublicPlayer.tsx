@@ -287,10 +287,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     });
 
     audio.addEventListener('stalled', () => {
-      console.warn('[Player Watchdog] Audio stalled, nudging buffer...');
-      if (isPlaying && audio.paused) {
-        audio.play().catch(console.warn);
-      }
+      console.warn('[Player Watchdog] Audio buffer stalled, waiting for data...');
     });
 
     // Handle track completion or live stream recycle
@@ -301,7 +298,8 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
 
       if (isLive) {
         // If broadcaster is actively on air, reconnect with fresh timestamp
-        if (current.is_mic_active || current.current_song_title === 'DJ EN VIVO' || current.is_live) {
+        const isDjActive = Boolean(current.is_mic_active || current.current_song_title === 'DJ EN VIVO');
+        if (isDjActive) {
           console.log('[Player Watchdog] Live stream connection recycled, auto-reconnecting...');
           setTimeout(() => {
             if (audioRef.current) {
@@ -360,7 +358,19 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       const current = radioStore.getStationState();
 
       if (isLiveStream) {
-        // Live stream failed (e.g. on iOS Safari or Render offline) -> Seamlessly fall back to direct song at current position
+        const isDjLive = Boolean(current.is_mic_active || current.current_song_title === 'DJ EN VIVO');
+        if (isDjLive) {
+          // Broadcaster is live on air with mic/DJ; re-trigger live stream instead of abruptly playing songs!
+          console.warn('[Player Watchdog] Live stream connection notice during live DJ session, reconnecting in 1s...');
+          setTimeout(() => {
+            if (audioRef.current && (stationState.is_mic_active || stationState.current_song_title === 'DJ EN VIVO')) {
+              audioRef.current.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
+              audioRef.current.play().catch(console.warn);
+            }
+          }, 1000);
+          return;
+        }
+
         const syncTime = getLiveSongProgress(current);
         const targetUrl = current.current_song_url || '/songs/summer.mp3';
         playDirectTrack(targetUrl, syncTime).catch(console.warn);
