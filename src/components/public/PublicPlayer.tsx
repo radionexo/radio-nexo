@@ -300,19 +300,28 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       const current = radioStore.getStationState();
 
       if (isLive) {
-        // Live stream socket was recycled by the server; auto-reconnect with fresh timestamp
-        console.log('[Player Watchdog] Live stream connection recycled, auto-reconnecting...');
-        setTimeout(() => {
-          if (audioRef.current) {
-            audioRef.current.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
-            audioRef.current.play().catch(() => {
-              const syncTime = getLiveSongProgress(current);
-              const fallbackUrl = current.current_song_url || '/songs/summer.mp3';
-              playDirectTrack(fallbackUrl, syncTime).catch(console.warn);
-            });
-          }
-        }, 600);
-        return;
+        // If broadcaster is actively on air, reconnect with fresh timestamp
+        if (current.is_mic_active || current.is_live) {
+          console.log('[Player Watchdog] Live stream connection recycled, auto-reconnecting...');
+          setTimeout(() => {
+            if (audioRef.current) {
+              audioRef.current.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
+              audioRef.current.play().catch(() => {
+                const syncTime = getLiveSongProgress(current);
+                const fallbackUrl = current.current_song_url || '/songs/summer.mp3';
+                playDirectTrack(fallbackUrl, syncTime).catch(console.warn);
+              });
+            }
+          }, 600);
+          return;
+        } else {
+          // Broadcaster stopped / disconnected -> immediately switch to continuous library music
+          console.log('[Player Watchdog] Transmisión en vivo cerrada por recarga/salida, pasando a música de biblioteca...');
+          const syncTime = getLiveSongProgress(current);
+          const fallbackUrl = current.current_song_url || '/songs/summer.mp3';
+          playDirectTrack(fallbackUrl, syncTime).catch(console.warn);
+          return;
+        }
       }
 
       // Direct track completed -> advance smoothly to next track in rotation (24/7 non-stop)
@@ -404,12 +413,23 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       const audio = audioRef.current;
       if (!audio) return;
 
-      // If user intended to play, but the audio element paused unexpectedly (OS sleep, audio focus change, etc.)
+      const current = radioStore.getStationState();
+      const currentSrc = audio.src || '';
+      const isLiveStream = checkIfLiveStream(currentSrc);
+
+      // 1. If DJ is on air (is_mic_active = true) but listener was left on direct music, auto-connect to live voice
+      if (current.is_mic_active && (!isLiveStream || audio.paused)) {
+        console.log('[Player Watchdog] DJ al aire detectado por watchdog, auto-conectando al stream en vivo...');
+        audio.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
+        audio.play().catch(console.warn);
+        return;
+      }
+
+      // 2. If user intended to play, but the audio element paused unexpectedly (OS sleep, audio focus change, etc.)
       if (audio.paused && !audio.ended && isPlaying && !isLoading) {
         console.warn('[Player Watchdog] Detected unexpected pause during playback, resuming...');
         audio.play().catch((err) => {
           console.warn('[Player Watchdog] Auto-resume error, falling back to direct track:', err);
-          const current = radioStore.getStationState();
           const syncTime = getLiveSongProgress(current);
           const fallbackUrl = current.current_song_url || '/songs/summer.mp3';
           playDirectTrack(fallbackUrl, syncTime).catch(console.warn);
@@ -440,14 +460,14 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [isPlaying]);
 
-  // When the DJ goes on air with microphone (is_mic_active = true),
-  // if listener is currently on direct track fallback, reconnect to live stream so voice is heard!
+  // Real-time synchronization when DJ goes on air or leaves the air:
+  // When is_mic_active turns TRUE -> ALWAYS immediately connect / reconnect with fresh timestamp
+  // When is_mic_active turns FALSE -> Seamlessly fall back to continuous library music
   useEffect(() => {
-    if (isPlaying && audioRef.current && stationState.is_mic_active && LIVE_STREAM_URL) {
-      const currentSrc = audioRef.current.src || '';
-      const isLiveStream = checkIfLiveStream(currentSrc);
-      if (!isLiveStream) {
-        const audio = audioRef.current;
+    if (isPlaying && audioRef.current && LIVE_STREAM_URL) {
+      const audio = audioRef.current;
+      if (stationState.is_mic_active) {
+        console.log('[Player] DJ entró al aire, reconectando al live stream automáticamente...');
         audio.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
         audio.play().catch((err) => {
           console.warn('Could not switch to live stream on mic active:', err);
@@ -455,9 +475,17 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
           const targetUrl = stationState.current_song_url || '/songs/summer.mp3';
           playDirectTrack(targetUrl, syncTime).catch(console.warn);
         });
+      } else if (!stationState.is_live) {
+        const currentSrc = audio.src || '';
+        if (checkIfLiveStream(currentSrc)) {
+          console.log('[Player] DJ salió del aire, pasando a música continua de biblioteca...');
+          const syncTime = getLiveSongProgress(stationState);
+          const targetUrl = stationState.current_song_url || '/songs/summer.mp3';
+          playDirectTrack(targetUrl, syncTime).catch(console.warn);
+        }
       }
     }
-  }, [stationState.is_mic_active]);
+  }, [stationState.is_mic_active, stationState.is_live, isPlaying]);
 
   const togglePlay = async () => {
     if (!audioRef.current) return;

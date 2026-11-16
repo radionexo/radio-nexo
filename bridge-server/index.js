@@ -56,6 +56,28 @@ function broadcastAudioChunk(chunk) {
   }
 }
 
+function terminateActiveBroadcast(sourceName) {
+  console.log(`[Broadcast] Desconexión de emisión (${sourceName}). Cerrando sockets de oyentes para auto-recuperación.`);
+  isBroadcasting = false;
+  broadcasterSocket = null;
+  headerChunk = null;
+  burstBuffer.length = 0;
+
+  // Gracefully close all existing HTTP listeners so their web players detect the stream closure
+  // and smoothly fall back to continuous music instead of hanging
+  for (const client of listeners) {
+    try {
+      client.end();
+    } catch {}
+  }
+  listeners.clear();
+
+  if (upstreamIcecastReq) {
+    upstreamIcecastReq.end();
+    upstreamIcecastReq = null;
+  }
+}
+
 // Create HTTP Server for Icecast-compatible HTTP stream and status
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
@@ -201,13 +223,13 @@ const server = http.createServer((req, res) => {
     });
 
     req.on('end', () => {
-      console.log('[Icecast Source] Virtual DJ finalizó transmisión.');
-      isBroadcasting = false;
+      terminateActiveBroadcast('Virtual DJ (end)');
     });
 
     req.on('close', () => {
-      console.log('[Icecast Source] Conexión cerrada con Virtual DJ.');
-      isBroadcasting = false;
+      if (isBroadcasting) {
+        terminateActiveBroadcast('Virtual DJ (close)');
+      }
     });
 
     return;
@@ -328,17 +350,12 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    console.log('[Broadcaster] NEXO Studio disconnected.');
-    isBroadcasting = false;
-    broadcasterSocket = null;
-    if (upstreamIcecastReq) {
-      upstreamIcecastReq.end();
-      upstreamIcecastReq = null;
-    }
+    terminateActiveBroadcast('NEXO Studio WebSocket (close)');
   });
 
   ws.on('error', (err) => {
     console.error('[Broadcaster] WebSocket error:', err.message);
+    terminateActiveBroadcast('NEXO Studio WebSocket (error)');
   });
 });
 
