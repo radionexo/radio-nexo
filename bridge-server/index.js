@@ -18,6 +18,44 @@ let isBroadcasting = false;
 let broadcasterSocket = null;
 let upstreamIcecastReq = null;
 
+// Ring pre-buffer for instant playback & zero-stutter on connect (~2-2.5s)
+const BURST_BUFFER_CHUNKS = 6;
+const burstBuffer = [];
+
+function broadcastAudioChunk(chunk) {
+  // 1. Maintain pre-buffer for new listeners
+  burstBuffer.push(chunk);
+  if (burstBuffer.length > BURST_BUFFER_CHUNKS) {
+    burstBuffer.shift();
+  }
+
+  // 2. Broadcast to all active listeners with backpressure protection
+  for (const client of listeners) {
+    if (client.writable && !client.destroyed) {
+      // Prevent lag build-up on congested listener networks (drop chunk if backlog > 128KB)
+      if (client.writableLength && client.writableLength > 128 * 1024) {
+        continue;
+      }
+      try {
+        client.write(chunk);
+      } catch {
+        listeners.delete(client);
+      }
+    } else {
+      listeners.delete(client);
+    }
+  }
+
+  // 3. Upstream Icecast forward
+  if (upstreamIcecastReq && !upstreamIcecastReq.destroyed) {
+    try {
+      upstreamIcecastReq.write(chunk);
+    } catch (err) {
+      console.warn('[Icecast Upstream] Write error:', err.message);
+    }
+  }
+}
+
 // Create HTTP Server for Icecast-compatible HTTP stream and status
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
@@ -145,6 +183,7 @@ const server = http.createServer((req, res) => {
     isBroadcasting = true;
     headerContentType = req.headers['content-type'] || 'audio/mpeg';
     headerChunk = null;
+    burstBuffer.length = 0;
 
     res.writeHead(200, {
       'Content-Type': 'text/plain',
@@ -158,16 +197,7 @@ const server = http.createServer((req, res) => {
       if (!headerChunk) {
         headerChunk = chunk;
       }
-      for (const client of listeners) {
-        try {
-          client.write(chunk);
-        } catch {
-          listeners.delete(client);
-        }
-      }
-      if (upstreamIcecastReq && !upstreamIcecastReq.destroyed) {
-        try { upstreamIcecastReq.write(chunk); } catch {}
-      }
+      broadcastAudioChunk(chunk);
     });
 
     req.on('end', () => {
@@ -201,33 +231,48 @@ const server = http.createServer((req, res) => {
 
   // Icecast-compatible Live Audio Stream
   if (parsed.pathname === '/live' || parsed.pathname === '/stream') {
+    if (req.socket) {
+      try { req.socket.setNoDelay(true); } catch {}
+    }
+
     res.writeHead(200, {
       'Content-Type': headerContentType,
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Pragma': 'no-cache',
       'Connection': 'keep-alive',
       'Transfer-Encoding': 'chunked',
-      'icy-name': 'NEXO RADIO - En Vivo',
+      'X-Content-Type-Options': 'nosniff',
+      'Access-Control-Allow-Origin': '*',
+      'icy-name': 'RADIO NEXO - En Vivo',
       'icy-genre': 'Hits / Pop / Electronic',
       'icy-pub': '1',
       'icy-br': '128',
     });
 
     listeners.add(res);
-    console.log(`[Stream] New listener connected. Total listeners: ${listeners.size}`);
+    console.log(`[Stream] Nuevo oyente conectado. Total oyentes: ${listeners.size}`);
 
-    // Immediately send the stream header so listener decoder initializes instantly
+    // 1. Immediately send the stream header so listener decoder initializes instantly
     if (headerChunk) {
       try {
         res.write(headerChunk);
       } catch (err) {
-        console.error('[Stream] Error sending initial header to listener:', err);
+        console.error('[Stream] Error enviando header inicial al oyente:', err);
+      }
+    }
+
+    // 2. Immediately send burst pre-buffer (~2s) for instant zero-stutter playback
+    for (const preChunk of burstBuffer) {
+      try {
+        res.write(preChunk);
+      } catch {
+        break;
       }
     }
 
     req.on('close', () => {
       listeners.delete(res);
-      console.log(`[Stream] Listener disconnected. Total listeners: ${listeners.size}`);
+      console.log(`[Stream] Oyente desconectado. Total oyentes: ${listeners.size}`);
     });
 
     return;
@@ -258,6 +303,7 @@ wss.on('connection', (ws) => {
   isBroadcasting = true;
   broadcasterSocket = ws;
   headerChunk = null;
+  burstBuffer.length = 0;
 
   // Optional: Connect to external Icecast server if configured
   setupIcecastUpstream();
@@ -278,24 +324,7 @@ wss.on('connection', (ws) => {
     }
 
     const chunk = Buffer.from(data);
-
-    // Forward to all connected HTTP listeners
-    for (const client of listeners) {
-      try {
-        client.write(chunk);
-      } catch (err) {
-        listeners.delete(client);
-      }
-    }
-
-    // Forward to upstream Icecast server if connected
-    if (upstreamIcecastReq && !upstreamIcecastReq.destroyed) {
-      try {
-        upstreamIcecastReq.write(chunk);
-      } catch (err) {
-        console.warn('[Icecast Upstream] Write error:', err.message);
-      }
-    }
+    broadcastAudioChunk(chunk);
   });
 
   ws.on('close', () => {

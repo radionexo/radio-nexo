@@ -278,6 +278,10 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       setIsLoading(false);
     });
 
+    audio.addEventListener('canplay', () => {
+      setIsLoading(false);
+    });
+
     audio.addEventListener('waiting', () => {
       setIsLoading(true);
     });

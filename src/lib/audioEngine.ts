@@ -115,8 +115,14 @@ class AudioEngine {
       this.micAnalyser.fftSize = 64;
       this.masterAnalyser.fftSize = 64;
 
-      // Master broadcast destination
+      // Master broadcast destination with dynamic broadcast peak limiter (anti-distortion)
       this.masterDestination = this.ctx.createMediaStreamDestination();
+      const masterLimiter = this.ctx.createDynamicsCompressor();
+      masterLimiter.threshold.setValueAtTime(-1.0, this.ctx.currentTime);
+      masterLimiter.knee.setValueAtTime(3.0, this.ctx.currentTime);
+      masterLimiter.ratio.setValueAtTime(20.0, this.ctx.currentTime);
+      masterLimiter.attack.setValueAtTime(0.003, this.ctx.currentTime);
+      masterLimiter.release.setValueAtTime(0.1, this.ctx.currentTime);
 
       // Routing:
       // Music -> musicGain -> masterGain (and musicAnalyser in parallel)
@@ -124,8 +130,9 @@ class AudioEngine {
       this.musicGainNode.connect(this.masterGainNode);
       this.musicGainNode.connect(this.musicAnalyser);
 
-      // Master -> masterDestination (to broadcast stream) & masterAnalyser
-      this.masterGainNode.connect(this.masterDestination);
+      // Master -> masterLimiter -> masterDestination (to broadcast stream) & masterAnalyser
+      this.masterGainNode.connect(masterLimiter);
+      masterLimiter.connect(this.masterDestination);
       this.masterGainNode.connect(this.masterAnalyser);
 
       // Master -> monitorGain -> speakers (for DJ monitoring in studio)
@@ -754,6 +761,10 @@ class AudioEngine {
         if (e.data && e.data.size > 0) {
           const buffer = await e.data.arrayBuffer();
           if (this.broadcastWs && this.broadcastWs.readyState === WebSocket.OPEN) {
+            // Anti-drift backpressure: drop stale chunks if local network buffer exceeds 64KB
+            if (this.broadcastWs.bufferedAmount > 64 * 1024) {
+              return;
+            }
             this.broadcastWs.send(buffer);
           } else if (initialChunkQueue.length < 5) {
             // Keep at most 5 chunks (header + fresh start) to prevent stale lag buffer
@@ -769,8 +780,8 @@ class AudioEngine {
         }
       };
 
-      // Emit chunks every 600ms for stable low latency
-      this.mediaRecorder.start(600);
+      // Emit chunks every 400ms for stable low latency and fluid streaming
+      this.mediaRecorder.start(400);
     } catch (err) {
       console.error('Failed to start media recorder / broadcast:', err);
       if (this.isBroadcasting) {
