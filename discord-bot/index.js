@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const {
   joinVoiceChannel,
@@ -95,7 +96,10 @@ async function connectToVoiceChannel() {
       return;
     }
 
-    console.log(`[Radio Nexo Bot] Conectando al canal de voz: #${channel.name} (${guild.name})...`);
+    console.log(`[Radio Nexo Bot] Conectando al canal de voz: #${channel.name} (${guild.name}) - Tipo: ${channel.type}...`);
+    const botMember = guild.members.me || await guild.members.fetchMe();
+    const permissions = channel.permissionsFor(botMember);
+    console.log(`[Radio Nexo Bot] Permisos: Connect=${permissions.has('Connect')}, Speak=${permissions.has('Speak')}, ViewChannel=${permissions.has('ViewChannel')}`);
 
     voiceConnection = joinVoiceChannel({
       channelId: channel.id,
@@ -105,9 +109,16 @@ async function connectToVoiceChannel() {
       selfMute: false,
     });
 
-    voiceConnection.on(VoiceConnectionStatus.Ready, () => {
-      console.log('[Radio Nexo Bot] ¡Conexión de voz establecida con Discord!');
-      playRadioStream();
+    voiceConnection.on('debug', (msg) => {
+      console.log(`[Voice Debug] ${msg}`);
+    });
+
+    voiceConnection.on('stateChange', (oldState, newState) => {
+      console.log(`[Radio Nexo Bot] Estado de voz: ${oldState.status} -> ${newState.status}`);
+      if (newState.status === VoiceConnectionStatus.Ready) {
+        console.log('[Radio Nexo Bot] ¡Conexión de voz establecida con Discord!');
+        playRadioStream();
+      }
     });
 
     voiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
