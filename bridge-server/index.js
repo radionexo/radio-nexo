@@ -18,8 +18,8 @@ let isBroadcasting = false;
 let broadcasterSocket = null;
 let upstreamIcecastReq = null;
 
-// Ring pre-buffer for instant playback & zero-stutter on connect (~2-2.5s)
-const BURST_BUFFER_CHUNKS = 6;
+// Ring pre-buffer for instant playback & zero-stutter on connect (~5s)
+const BURST_BUFFER_CHUNKS = 10;
 const burstBuffer = [];
 
 function broadcastAudioChunk(chunk) {
@@ -29,11 +29,12 @@ function broadcastAudioChunk(chunk) {
     burstBuffer.shift();
   }
 
-  // 2. Broadcast to all active listeners with backpressure protection
+  // 2. Broadcast to all active listeners (never drop individual chunks; disconnect dead sockets instead)
   for (const client of listeners) {
     if (client.writable && !client.destroyed) {
-      // Prevent lag build-up on congested listener networks (drop chunk if backlog > 128KB)
-      if (client.writableLength && client.writableLength > 128 * 1024) {
+      if (client.writableLength && client.writableLength > 2 * 1024 * 1024) {
+        try { client.end(); } catch {}
+        listeners.delete(client);
         continue;
       }
       try {
@@ -343,6 +344,12 @@ wss.on('connection', (ws) => {
         headerContentType = 'audio/webm; codecs=opus';
       }
       console.log(`[Broadcaster] Initial header received (${headerChunk.length} bytes), format: ${headerContentType}`);
+      for (const client of listeners) {
+        if (client.writable && !client.destroyed) {
+          try { client.write(headerChunk); } catch {}
+        }
+      }
+      return;
     }
 
     const chunk = Buffer.from(data);

@@ -802,13 +802,8 @@ class AudioEngine {
         if (e.data && e.data.size > 0) {
           const buffer = await e.data.arrayBuffer();
           if (this.broadcastWs && this.broadcastWs.readyState === WebSocket.OPEN) {
-            // Anti-drift backpressure: drop stale chunks if local network buffer exceeds 64KB
-            if (this.broadcastWs.bufferedAmount > 64 * 1024) {
-              return;
-            }
             this.broadcastWs.send(buffer);
-          } else if (initialChunkQueue.length < 5) {
-            // Keep at most 5 chunks (header + fresh start) to prevent stale lag buffer
+          } else if (initialChunkQueue.length < 8) {
             initialChunkQueue.push(buffer);
           }
         }
@@ -821,8 +816,8 @@ class AudioEngine {
         }
       };
 
-      // Emit chunks every 400ms for stable low latency and fluid streaming
-      this.mediaRecorder.start(400);
+      // Emit chunks every 500ms for stable WebM/Opus frame clusters and smooth delivery
+      this.mediaRecorder.start(500);
     } catch (err) {
       console.error('Failed to start media recorder / broadcast:', err);
       if (this.isBroadcasting) {

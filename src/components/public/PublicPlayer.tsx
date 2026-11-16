@@ -414,11 +414,14 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
 
       const isDjOnAir = Boolean(current.is_mic_active || current.current_song_title === 'DJ EN VIVO');
 
-      // 1. If DJ is on air, guarantee listener is connected to the live stream
+      // 1. If DJ is on air, guarantee listener is connected to the live stream without destroying active playback
       if (isDjOnAir) {
-        if (!isLiveStream || audio.paused) {
-          console.log('[Player Watchdog] DJ al aire detectado por watchdog, auto-conectando al stream en vivo...');
+        if (!isLiveStream) {
+          console.log('[Player Watchdog] DJ al aire detectado por watchdog, cambiando al stream en vivo...');
           audio.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
+          audio.play().catch(console.warn);
+        } else if (audio.paused && isPlaying && !isLoading) {
+          // If already on the live stream, simply call play() to unpause without tearing down the connection
           audio.play().catch(console.warn);
         }
         return;
