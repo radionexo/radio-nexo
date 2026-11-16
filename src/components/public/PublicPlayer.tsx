@@ -538,6 +538,11 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     }
   };
 
+  const isDjLive = Boolean(
+    stationState.is_mic_active ||
+    stationState.current_song_title === 'DJ EN VIVO'
+  );
+
   return (
     <div className="relative flex flex-col items-center justify-center w-full max-w-2xl mx-auto px-4 py-1 sm:py-2">
       {/* Vinyl Aura & Rotating Center Disc */}
@@ -582,10 +587,10 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
             {/* Mockup Typography inside the disc */}
             <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-3 pointer-events-none">
               <span className="text-[9px] sm:text-[11px] font-semibold tracking-widest uppercase text-white/90 drop-shadow-md">
-                {stationState.is_mic_active ? 'RADIO NEXO' : stationState.current_song_artist.toUpperCase()}
+                {isDjLive ? 'RADIO NEXO' : stationState.current_song_artist.toUpperCase()}
               </span>
               <span className="text-xs sm:text-lg font-bold tracking-wider uppercase text-white drop-shadow-lg truncate max-w-[85%]">
-                {stationState.is_mic_active ? 'DJ EN VIVO' : stationState.current_song_title.toUpperCase()}
+                {isDjLive ? 'DJ EN VIVO' : stationState.current_song_title.toUpperCase()}
               </span>
             </div>
           </div>
@@ -595,20 +600,20 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       {/* Song Metadata Display / Live DJ Indicator */}
       <div className="text-center mt-1 sm:mt-2 z-10">
         <div className="flex items-center justify-center gap-2">
-          {stationState.is_mic_active && (
+          {isDjLive && (
             <span className="relative flex h-3 w-3">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-500 opacity-75" />
               <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500" />
             </span>
           )}
           <h2 className={`text-xl sm:text-3xl font-bold tracking-tight drop-shadow-md truncate max-w-lg ${
-            stationState.is_mic_active ? 'text-rose-400 font-black' : 'text-white'
+            isDjLive ? 'text-rose-400 font-black' : 'text-white'
           }`}>
-            {stationState.is_mic_active ? 'DJ EN VIVO' : stationState.current_song_title}
+            {isDjLive ? 'DJ EN VIVO' : stationState.current_song_title}
           </h2>
         </div>
         <p className="text-xs sm:text-sm font-medium text-[#e5b45f] mt-0.5 tracking-wide">
-          {stationState.is_mic_active ? 'Sesión en Directo · Radio Nexo' : stationState.current_song_artist}
+          {isDjLive ? 'Sesión en Directo · Radio Nexo' : stationState.current_song_artist}
         </p>
       </div>
 
@@ -704,22 +709,22 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       {/* Live Badge Status & Song Request Button */}
       <div className="mt-3 sm:mt-4 flex flex-wrap items-center justify-center gap-2.5 z-10">
         <div className={`inline-flex items-center gap-2 px-3.5 py-1 rounded-full border backdrop-blur-md transition-all ${
-          stationState.is_mic_active
+          isDjLive
             ? 'border-rose-500/60 bg-rose-500/15 shadow-sm shadow-rose-500/30'
             : 'border-[#e5b45f]/40 bg-[#e5b45f]/10'
         }`}>
           <span className="relative flex h-2 w-2">
             <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-              stationState.is_mic_active ? 'bg-rose-500' : 'bg-[#e5b45f]'
+              isDjLive ? 'bg-rose-500' : 'bg-[#e5b45f]'
             }`} />
             <span className={`relative inline-flex rounded-full h-2 w-2 ${
-              stationState.is_mic_active ? 'bg-rose-500' : 'bg-[#e5b45f]'
+              isDjLive ? 'bg-rose-500' : 'bg-[#e5b45f]'
             }`} />
           </span>
           <span className={`text-[11px] font-bold tracking-wider uppercase ${
-            stationState.is_mic_active ? 'text-rose-400' : 'text-[#e5b45f]'
+            isDjLive ? 'text-rose-400' : 'text-[#e5b45f]'
           }`}>
-            {stationState.is_mic_active ? '🔴 AL AIRE · DJ EN VIVO' : 'EN VIVO · RADIO NEXO'}
+            {isDjLive ? '🔴 AL AIRE · DJ EN VIVO' : 'EN VIVO · RADIO NEXO'}
           </span>
         </div>
 

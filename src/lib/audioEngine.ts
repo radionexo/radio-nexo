@@ -530,7 +530,11 @@ class AudioEngine {
       }
 
       this.isMicOnAir = true;
-      radioStore.updateStationState({ is_mic_active: true });
+      radioStore.updateStationState({
+        is_mic_active: true,
+        current_song_title: 'DJ EN VIVO',
+        current_song_artist: 'Sesión en Directo · Radio Nexo',
+      });
       this.persistSession();
       this.notify();
       return true;
@@ -568,7 +572,23 @@ class AudioEngine {
     }
 
     this.isMicOnAir = false;
-    radioStore.updateStationState({ is_mic_active: false });
+    if (this.currentSong) {
+      radioStore.updateStationState({
+        is_mic_active: false,
+        current_song_id: this.currentSong.id,
+        current_song_title: this.currentSong.title,
+        current_song_artist: this.currentSong.artist,
+        current_song_cover: this.currentSong.cover_url || '/cover_default.webp',
+        current_song_url: this.currentSong.file_url,
+        current_song_duration: this.currentSong.duration,
+      });
+    } else {
+      radioStore.updateStationState({
+        is_mic_active: false,
+        current_song_title: 'Radio Nexo',
+        current_song_artist: 'En Vivo',
+      });
+    }
     this.persistSession();
     this.notify();
   }
@@ -930,7 +950,7 @@ class AudioEngine {
       // Fallback: check station state if session was not in playback session
       if (!targetSong) {
         const state = radioStore.getStationState();
-        if (state && state.is_live && state.current_song_title) {
+        if (state && state.is_live && state.current_song_title && state.current_song_title !== 'DJ EN VIVO') {
           targetSong = {
             id: state.current_song_id || 'restored-song',
             title: state.current_song_title,

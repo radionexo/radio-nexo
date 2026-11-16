@@ -311,16 +311,16 @@ export default function StudioDashboardPage() {
                     Ahora suena
                   </span>
                   {engineState.isMicOnAir && (
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#e5b45f]/20 text-[#e5b45f] border border-[#e5b45f]/40 animate-pulse">
-                      Atenuada
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse">
+                      🔴 AL AIRE
                     </span>
                   )}
                 </div>
-                <h3 className="text-base font-bold text-white truncate mt-0.5" title={engineState.currentSong?.title || stationState.current_song_title}>
-                  {engineState.currentSong?.title || stationState.current_song_title}
+                <h3 className={`text-base font-bold truncate mt-0.5 ${engineState.isMicOnAir ? 'text-rose-400 font-black' : 'text-white'}`} title={engineState.isMicOnAir ? 'DJ EN VIVO' : (engineState.currentSong?.title || stationState.current_song_title)}>
+                  {engineState.isMicOnAir ? 'DJ EN VIVO' : (engineState.currentSong?.title || stationState.current_song_title)}
                 </h3>
-                <p className="text-xs font-medium text-[#e5b45f] truncate" title={engineState.currentSong?.artist || stationState.current_song_artist}>
-                  {engineState.currentSong?.artist || stationState.current_song_artist}
+                <p className="text-xs font-medium text-[#e5b45f] truncate" title={engineState.isMicOnAir ? 'Sesión en Directo · Radio Nexo' : (engineState.currentSong?.artist || stationState.current_song_artist)}>
+                  {engineState.isMicOnAir ? 'Sesión en Directo · Radio Nexo' : (engineState.currentSong?.artist || stationState.current_song_artist)}
                 </p>
               </div>
             </div>
