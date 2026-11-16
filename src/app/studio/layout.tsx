@@ -104,8 +104,10 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
   useEffect(() => {
     if (isAuthenticated) {
       audioEngine.restoreSession();
-      // Ensure microphone is definitely off the air on studio reload
-      radioStore.updateStationState({ is_mic_active: false });
+      // Only clear mic state if the engine isn't currently active
+      if (!audioEngine.getState().isMicOnAir) {
+        radioStore.updateStationState({ is_mic_active: false });
+      }
     }
   }, [isAuthenticated]);
 

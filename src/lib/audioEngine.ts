@@ -335,6 +335,11 @@ class AudioEngine {
   }
 
   public async nextTrack() {
+    if (this.isMicOnAir) {
+      console.log('[AudioEngine] nextTrack cancelado porque el DJ está al aire');
+      return;
+    }
+
     const queue = radioStore.getQueue();
     if (queue.length > 0) {
       const nextSong = queue[0];
@@ -377,6 +382,7 @@ class AudioEngine {
   }
 
   private handleTrackEnded() {
+    if (this.isMicOnAir) return;
     this.nextTrack();
   }
 

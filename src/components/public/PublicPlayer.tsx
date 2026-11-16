@@ -301,16 +301,12 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
 
       if (isLive) {
         // If broadcaster is actively on air, reconnect with fresh timestamp
-        if (current.is_mic_active || current.is_live) {
+        if (current.is_mic_active || current.current_song_title === 'DJ EN VIVO' || current.is_live) {
           console.log('[Player Watchdog] Live stream connection recycled, auto-reconnecting...');
           setTimeout(() => {
             if (audioRef.current) {
               audioRef.current.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
-              audioRef.current.play().catch(() => {
-                const syncTime = getLiveSongProgress(current);
-                const fallbackUrl = current.current_song_url || '/songs/summer.mp3';
-                playDirectTrack(fallbackUrl, syncTime).catch(console.warn);
-              });
+              audioRef.current.play().catch(console.warn);
             }
           }, 600);
           return;
@@ -324,7 +320,17 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
         }
       }
 
-      // Direct track completed -> advance smoothly to next track in rotation (24/7 non-stop)
+      // If DJ is on air, NEVER advance library music; stay on the live stream!
+      if (current.is_mic_active || current.current_song_title === 'DJ EN VIVO') {
+        if (LIVE_STREAM_URL && audioRef.current) {
+          audioRef.current.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
+          audioRef.current.play().catch(console.warn);
+        }
+        return;
+      }
+
+      // Direct track completed -> advance smoothly to next track in rotation locally
+      // (WITHOUT calling updateStationState, which would overwrite the station state)
       try {
         const songs = await radioStore.getSongs();
         if (songs && songs.length > 0) {
@@ -336,17 +342,6 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
           const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % songs.length : 0;
           const nextSong = songs[nextIndex] || songs[0];
           const nextUrl = nextSong.file_url || '/songs/summer.mp3';
-
-          // Update station state so listener UI updates title, artist and cover seamlessly
-          radioStore.updateStationState({
-            current_song_id: nextSong.id,
-            current_song_title: nextSong.title,
-            current_song_artist: nextSong.artist,
-            current_song_cover: nextSong.cover_url,
-            current_song_url: nextUrl,
-            current_song_duration: nextSong.duration,
-            current_song_progress: 0,
-          });
 
           await playDirectTrack(nextUrl, 0);
           return;
@@ -417,15 +412,19 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       const currentSrc = audio.src || '';
       const isLiveStream = checkIfLiveStream(currentSrc);
 
-      // 1. If DJ is on air (is_mic_active = true) but listener was left on direct music, auto-connect to live voice
-      if (current.is_mic_active && (!isLiveStream || audio.paused)) {
-        console.log('[Player Watchdog] DJ al aire detectado por watchdog, auto-conectando al stream en vivo...');
-        audio.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
-        audio.play().catch(console.warn);
+      const isDjOnAir = Boolean(current.is_mic_active || current.current_song_title === 'DJ EN VIVO');
+
+      // 1. If DJ is on air, guarantee listener is connected to the live stream
+      if (isDjOnAir) {
+        if (!isLiveStream || audio.paused) {
+          console.log('[Player Watchdog] DJ al aire detectado por watchdog, auto-conectando al stream en vivo...');
+          audio.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
+          audio.play().catch(console.warn);
+        }
         return;
       }
 
-      // 2. If user intended to play, but the audio element paused unexpectedly (OS sleep, audio focus change, etc.)
+      // 2. If user intended to play music, but the audio element paused unexpectedly (OS sleep, audio focus change, etc.)
       if (audio.paused && !audio.ended && isPlaying && !isLoading) {
         console.warn('[Player Watchdog] Detected unexpected pause during playback, resuming...');
         audio.play().catch((err) => {
