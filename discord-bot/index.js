@@ -1,12 +1,20 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
+
+const ffmpegStatic = require('ffmpeg-static');
+if (ffmpegStatic) {
+  process.env.FFMPEG_PATH = ffmpegStatic;
+}
+
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const {
   joinVoiceChannel,
+  getVoiceConnection,
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus,
   VoiceConnectionStatus,
+  NoSubscriberBehavior,
   entersState,
 } = require('@discordjs/voice');
 
@@ -34,10 +42,14 @@ let isReconnecting = false;
 
 function playRadioStream() {
   if (!audioPlayer) {
-    audioPlayer = createAudioPlayer();
+    audioPlayer = createAudioPlayer({
+      behaviors: {
+        noSubscriber: NoSubscriberBehavior.Play,
+      },
+    });
 
     audioPlayer.on(AudioPlayerStatus.Playing, () => {
-      console.log('[Radio Nexo Bot] Transmitiendo audio en vivo en Discord exitosamente.');
+      console.log('[Radio Nexo Bot] ¡Transmitiendo audio en vivo en Discord exitosamente!');
       if (client.user) {
         client.user.setActivity('RADIO NEXO · En Vivo', { type: ActivityType.Listening });
       }
@@ -105,19 +117,17 @@ async function connectToVoiceChannel() {
       channelId: channel.id,
       guildId: guild.id,
       adapterCreator: guild.voiceAdapterCreator,
-      selfDeaf: true,
+      selfDeaf: false,
       selfMute: false,
     });
 
-    voiceConnection.on('debug', (msg) => {
-      console.log(`[Voice Debug] ${msg}`);
-    });
-
     voiceConnection.on('stateChange', (oldState, newState) => {
-      console.log(`[Radio Nexo Bot] Estado de voz: ${oldState.status} -> ${newState.status}`);
-      if (newState.status === VoiceConnectionStatus.Ready) {
-        console.log('[Radio Nexo Bot] ¡Conexión de voz establecida con Discord!');
-        playRadioStream();
+      if (oldState.status !== newState.status) {
+        console.log(`[Radio Nexo Bot] Estado de voz: ${oldState.status} -> ${newState.status}`);
+        if (newState.status === VoiceConnectionStatus.Ready) {
+          console.log('[Radio Nexo Bot] ¡Conexión de voz establecida con Discord!');
+          playRadioStream();
+        }
       }
     });
 
