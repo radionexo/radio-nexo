@@ -108,6 +108,69 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Icecast Source Endpoint (Virtual DJ, Mixxx, BUTT, OBS, etc.)
+  if ((req.method === 'SOURCE' || req.method === 'PUT') && (parsed.pathname === '/live' || parsed.pathname === '/broadcast' || parsed.pathname === '/stream')) {
+    const authHeader = req.headers['authorization'] || '';
+    const icePassword = req.headers['ice-password'] || '';
+    const expectedPassword = process.env.BRIDGE_PASSWORD || 'nexoradio2026';
+
+    let authorized = true;
+    if (expectedPassword) {
+      if (icePassword && icePassword !== expectedPassword) {
+        authorized = false;
+      } else if (authHeader.startsWith('Basic ')) {
+        const decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf-8');
+        const [_, pwd] = decoded.split(':');
+        if (pwd && pwd !== expectedPassword) authorized = false;
+      }
+    }
+
+    if (!authorized) {
+      console.warn('[Icecast Source] Intento de conexión con contraseña inválida.');
+      res.writeHead(401, { 'Content-Type': 'text/plain' });
+      res.end('Invalid credentials\n');
+      return;
+    }
+
+    console.log(`[Icecast Source] Virtual DJ / Encodificador conectado vía ${req.method} en ${parsed.pathname}`);
+    isBroadcasting = true;
+    headerContentType = req.headers['content-type'] || 'audio/mpeg';
+    headerChunk = null;
+
+    res.writeHead(200, {
+      'Content-Type': 'text/plain',
+      'Connection': 'keep-alive',
+    });
+
+    req.on('data', (chunk) => {
+      if (!headerChunk) {
+        headerChunk = chunk;
+      }
+      for (const client of listeners) {
+        try {
+          client.write(chunk);
+        } catch {
+          listeners.delete(client);
+        }
+      }
+      if (upstreamIcecastReq && !upstreamIcecastReq.destroyed) {
+        try { upstreamIcecastReq.write(chunk); } catch {}
+      }
+    });
+
+    req.on('end', () => {
+      console.log('[Icecast Source] Virtual DJ finalizó transmisión.');
+      isBroadcasting = false;
+    });
+
+    req.on('close', () => {
+      console.log('[Icecast Source] Conexión cerrada con Virtual DJ.');
+      isBroadcasting = false;
+    });
+
+    return;
+  }
+
   // Health / Status endpoint
   if (parsed.pathname === '/status') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
