@@ -478,10 +478,10 @@ export default function StudioDashboardPage() {
               <div className="flex items-center justify-between text-xs">
                 <span className="flex items-center gap-1 text-gray-300 font-medium text-[11px]">
                   <Volume2 className="w-3 h-3 text-[#e5b45f]" />
-                  Música {engineState.isMicOnAir && <span className="text-[#e5b45f] text-[10px]">(15%)</span>}
+                  Música {engineState.isMicOnAir && <span className="text-amber-400 text-[10px] font-bold">(Pausada en vivo)</span>}
                 </span>
                 <span className="font-mono text-gray-400 text-[11px]">
-                  {engineState.isMicOnAir ? '15%' : `${Math.round(engineState.musicVolume * 100)}%`}
+                  {engineState.isMicOnAir ? 'Pausada' : `${Math.round(engineState.musicVolume * 100)}%`}
                 </span>
               </div>
               <StudioVuMeter type="music" />

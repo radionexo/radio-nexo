@@ -49,6 +49,7 @@ class AudioEngine {
   private airTimerInterval: NodeJS.Timeout | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private broadcastReconnectTimeout: NodeJS.Timeout | null = null;
+  private wasPlayingBeforeMic = false;
 
   private onStateChangeCallbacks: Set<() => void> = new Set();
   private onLevelCallbacks: Set<(levels: AudioLevels) => void> = new Set();
@@ -507,16 +508,21 @@ class AudioEngine {
       }
 
       const now = this.ctx.currentTime;
-      // 2. Duck music smoothly to 15% in 350ms
-      const targetMusicGain = this.musicVolume * this.duckedMusicRatio;
+      // 2. Pause internal studio music player so it doesn't clash with Virtual DJ / live voice
+      this.wasPlayingBeforeMic = this.isPlaying;
+      if (this.audioElement && this.isPlaying) {
+        try {
+          this.audioElement.pause();
+          this.isPlaying = false;
+        } catch {}
+      }
       this.musicGainNode.gain.cancelScheduledValues(now);
-      this.musicGainNode.gain.setValueAtTime(this.musicGainNode.gain.value, now);
-      this.musicGainNode.gain.linearRampToValueAtTime(targetMusicGain, now + 0.35);
+      this.musicGainNode.gain.setValueAtTime(0, now);
 
-      // 3. Ramp mic in over 250ms
+      // 3. Ramp mic in over 200ms
       this.micGainNode.gain.cancelScheduledValues(now);
       this.micGainNode.gain.setValueAtTime(this.micGainNode.gain.value, now);
-      this.micGainNode.gain.linearRampToValueAtTime(this.micVolume, now + 0.25);
+      this.micGainNode.gain.linearRampToValueAtTime(this.micVolume, now + 0.2);
 
       // Lower monitor speaker for mic to prevent feedback in studio
       if (this.monitorGainNode) {
@@ -525,6 +531,7 @@ class AudioEngine {
 
       this.isMicOnAir = true;
       radioStore.updateStationState({ is_mic_active: true });
+      this.persistSession();
       this.notify();
       return true;
     } catch (err) {
@@ -538,15 +545,22 @@ class AudioEngine {
 
     const now = this.ctx.currentTime;
 
-    // 1. Fade out microphone in 250ms
+    // 1. Fade out microphone in 200ms
     this.micGainNode.gain.cancelScheduledValues(now);
     this.micGainNode.gain.setValueAtTime(this.micGainNode.gain.value, now);
-    this.micGainNode.gain.linearRampToValueAtTime(0.0001, now + 0.25);
+    this.micGainNode.gain.linearRampToValueAtTime(0.0001, now + 0.2);
 
-    // 2. Restore normal music volume smoothly in 700ms
+    // 2. Restore normal music volume and auto-resume music if it was playing before
     this.musicGainNode.gain.cancelScheduledValues(now);
-    this.musicGainNode.gain.setValueAtTime(this.musicGainNode.gain.value, now);
-    this.musicGainNode.gain.linearRampToValueAtTime(this.musicVolume, now + 0.7);
+    this.musicGainNode.gain.setValueAtTime(this.musicVolume, now);
+
+    if (this.wasPlayingBeforeMic && this.audioElement && this.currentSong) {
+      try {
+        this.audioElement.play().catch(console.warn);
+        this.isPlaying = true;
+      } catch {}
+    }
+    this.wasPlayingBeforeMic = false;
 
     // Restore monitor volume
     if (this.monitorGainNode) {
@@ -555,6 +569,7 @@ class AudioEngine {
 
     this.isMicOnAir = false;
     radioStore.updateStationState({ is_mic_active: false });
+    this.persistSession();
     this.notify();
   }
 
