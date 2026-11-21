@@ -1,5 +1,5 @@
 // NEXO RADIO - Progressive Web App Service Worker
-const CACHE_NAME = 'nexo-radio-pwa-v1';
+const CACHE_NAME = 'nexo-radio-pwa-v2';
 
 const STATIC_ASSETS = [
   '/',
@@ -44,10 +44,13 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  // 1. NEVER cache audio streams, live endpoints, or range requests
+  // 1. NEVER cache audio streams, HLS playlists/segments, live endpoints, or range requests
   if (
     url.pathname.includes('/live') ||
     url.pathname.includes('/stream') ||
+    url.pathname.includes('/hls/') ||
+    url.pathname.endsWith('.m3u8') ||
+    url.pathname.endsWith('.ts') ||
     url.pathname.endsWith('.mp3') ||
     url.pathname.endsWith('.aac') ||
     url.pathname.endsWith('.ogg') ||
