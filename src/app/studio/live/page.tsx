@@ -233,42 +233,6 @@ export default function StudioLivePage() {
             />
           </div>
 
-          {/* Music */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-gray-300 font-semibold flex items-center gap-1.5">
-                <Volume2 className="w-4 h-4 text-[#e5b45f]" />
-                Música {engineState.isMicOnAir && <span className="text-[#e5b45f] text-[11px]">(atenuada a 15%)</span>}
-              </span>
-              <span className="text-white font-mono">
-                {engineState.isMicOnAir ? '15%' : `${Math.round(engineState.musicVolume * 100)}%`}
-              </span>
-            </div>
-            <div className="h-3 w-full bg-neutral-900 rounded-full overflow-hidden flex gap-0.5 p-0.5">
-              {[...Array(24)].map((_, i) => (
-                <div
-                  key={i}
-                  className={`flex-1 rounded-xs transition-all duration-75 ${
-                    (levels.music / 100) * 24 > i
-                      ? i > 19
-                        ? 'bg-rose-500'
-                        : 'bg-[#e5b45f]'
-                      : 'bg-neutral-800'
-                  }`}
-                />
-              ))}
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="1.5"
-              step="0.01"
-              value={engineState.musicVolume}
-              onChange={(e) => audioEngine.setMusicVolume(parseFloat(e.target.value))}
-              className="w-full h-1.5 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-[#e5b45f]"
-            />
-          </div>
-
           {/* Master Volume */}
           <div className="space-y-2 pt-2 border-t border-white/5">
             <div className="flex items-center justify-between text-xs">
@@ -290,55 +254,8 @@ export default function StudioLivePage() {
 
       {/* Bottom Row Information */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Now On Air Music Info */}
-        <div className="lg:col-span-4 rounded-3xl glass-panel p-5 border border-white/5 space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-400 font-medium">
-              Ahora al aire {engineState.isMicOnAir && '(música en segundo plano)'}
-            </span>
-            {engineState.isMicOnAir && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#e5b45f]/20 text-[#e5b45f] font-semibold">
-                Música atenuada
-              </span>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="w-14 h-14 rounded-2xl overflow-hidden shrink-0 bg-neutral-900">
-              <img
-                src={stationState.current_song_cover || '/cover_default.webp'}
-                alt="Cover"
-                className="w-full h-full object-cover"
-              />
-            </div>
-            <div className="min-w-0">
-              <h4 className="text-sm font-bold text-white truncate">{stationState.current_song_title}</h4>
-              <p className="text-xs text-[#e5b45f] truncate">{stationState.current_song_artist}</p>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <div className="w-full h-1 bg-neutral-800 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-[#e5b45f] rounded-full"
-                style={{
-                  width: `${
-                    engineState.duration > 0
-                      ? Math.min(100, (engineState.currentTime / engineState.duration) * 100)
-                      : 40
-                  }%`,
-                }}
-              />
-            </div>
-            <div className="flex justify-between text-[10px] text-gray-400 font-mono">
-              <span>{formatTime(engineState.currentTime)}</span>
-              <span>{formatTime(engineState.duration || 232)}</span>
-            </div>
-          </div>
-        </div>
-
         {/* Program & Host Info */}
-        <div className="lg:col-span-4 rounded-3xl glass-panel p-5 border border-white/5 space-y-4">
+        <div className="lg:col-span-6 rounded-3xl glass-panel p-5 border border-white/5 space-y-4">
           <div className="flex items-center justify-between">
             <span className="text-xs text-gray-400 font-medium">Información del programa</span>
             <span className="text-[10px] text-rose-400 font-semibold">● EN VIVO</span>
@@ -366,7 +283,7 @@ export default function StudioLivePage() {
         </div>
 
         {/* Realtime Audience Stats (Mockup 04) */}
-        <div className="lg:col-span-4 rounded-3xl glass-panel p-5 border border-white/5 flex flex-col justify-between">
+        <div className="lg:col-span-6 rounded-3xl glass-panel p-5 border border-white/5 flex flex-col justify-between">
           <span className="text-xs text-gray-400 font-medium">Estadísticas en tiempo real</span>
           <div className="grid grid-cols-3 gap-2 my-2 text-center">
             <div className="p-2.5 rounded-2xl bg-white/5">

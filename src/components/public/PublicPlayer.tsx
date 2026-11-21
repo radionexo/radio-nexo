@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Volume2, Volume1, VolumeX, Heart, Radio, Music2 } from 'lucide-react';
-import { radioStore, getLiveSongProgress } from '@/lib/radioStore';
+import { Play, Pause, Volume2, Volume1, VolumeX, Music2 } from 'lucide-react';
+import { radioStore } from '@/lib/radioStore';
 import { StationState } from '@/lib/types';
 
 const VOLUME_STORAGE_KEY = 'nexo_listener_volume_v1';
@@ -18,11 +18,14 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
   const [isLoading, setIsLoading] = useState(false);
   const [volume, setVolume] = useState(0.85);
   const [isMuted, setIsMuted] = useState(false);
-  const [isLiked, setIsLiked] = useState(false);
-  const [heartAnimation, setHeartAnimation] = useState(false);
-  const [likeToast, setLikeToast] = useState<string | null>(null);
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const isPlayingRef = useRef(false);
+
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
 
   // Restore saved volume and muted state from localStorage
   useEffect(() => {
@@ -94,71 +97,6 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     return () => unsubscribe();
   }, []);
 
-  // Check if current playing song is in favorites
-  useEffect(() => {
-    let isMounted = true;
-    const checkFavorite = async () => {
-      const songs = await radioStore.getSongs();
-      const current = songs.find(
-        (s) =>
-          (stationState.current_song_id && s.id === stationState.current_song_id) ||
-          (stationState.current_song_title &&
-            s.title.toLowerCase().trim() === stationState.current_song_title.toLowerCase().trim())
-      );
-      if (isMounted) {
-        setIsLiked(Boolean(current?.is_favorite));
-      }
-    };
-    checkFavorite();
-    const unsub = radioStore.subscribe(checkFavorite);
-    return () => {
-      isMounted = false;
-      unsub();
-    };
-  }, [stationState.current_song_id, stationState.current_song_title]);
-
-  const handleToggleFavorite = async () => {
-    try {
-      const songs = await radioStore.getSongs();
-      let activeSong = songs.find(
-        (s) =>
-          (stationState.current_song_id && s.id === stationState.current_song_id) ||
-          (stationState.current_song_title &&
-            s.title.toLowerCase().trim() === stationState.current_song_title.toLowerCase().trim())
-      );
-
-      // If active song is not yet in library, add it with is_favorite = true
-      if (!activeSong && stationState.current_song_title) {
-        activeSong = await radioStore.addSong({
-          title: stationState.current_song_title,
-          artist: stationState.current_song_artist || 'Radio Nexo',
-          genre: 'Pop',
-          file_url: stationState.current_song_url || '/songs/summer.mp3',
-          cover_url: stationState.current_song_cover || '/cover_default.webp',
-          duration: stationState.current_song_duration || 180,
-          is_favorite: true,
-        });
-        setIsLiked(true);
-        setHeartAnimation(true);
-        setLikeToast('¡Guardada en Favoritas!');
-        setTimeout(() => setHeartAnimation(false), 800);
-        setTimeout(() => setLikeToast(null), 3000);
-        return;
-      }
-
-      if (activeSong) {
-        const nextFav = await radioStore.toggleFavorite(activeSong.id);
-        setIsLiked(nextFav);
-        setHeartAnimation(nextFav);
-        setLikeToast(nextFav ? '¡Guardada en Favoritas!' : 'Eliminada de Favoritas');
-        setTimeout(() => setHeartAnimation(false), 800);
-        setTimeout(() => setLikeToast(null), 3000);
-      }
-    } catch (err) {
-      console.error('Error toggling favorite from player:', err);
-    }
-  };
-
   // Stream URLs: MP3 192kbps CBR (Desktop/Android) & Native Apple HLS AAC (.m3u8 for iOS/Safari)
   const LIVE_STREAM_URL = process.env.NEXT_PUBLIC_STREAM_URL || 'https://nexo-radio-bridge-axxt.onrender.com/live';
   const HLS_STREAM_URL =
@@ -186,114 +124,10 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     return `${LIVE_STREAM_URL}?t=${Date.now()}`;
   };
 
-  const checkIfLiveStream = (src?: string | null) => {
-    if (!src) return false;
-    if (LIVE_STREAM_URL && src.includes(LIVE_STREAM_URL.split('?')[0])) return true;
-    if (HLS_STREAM_URL && src.includes(HLS_STREAM_URL.split('?')[0])) return true;
-    return src.includes('/live') || src.includes('/hls/') || src.includes('.m3u8') || src.includes('onrender.com');
-  };
-
-  // Dedicated iOS-compatible direct track playback coordinator
-  const playDirectTrack = async (targetSongUrl: string, syncTime: number) => {
-    if (!audioRef.current) return;
-    const audio = audioRef.current;
-
-    const isSameSource = audio.src && (audio.src === targetSongUrl || audio.src.endsWith(targetSongUrl));
-
-    if (!isSameSource) {
-      audio.src = targetSongUrl;
-      audio.preload = 'auto';
-    }
-
-    if (syncTime <= 0) {
-      try {
-        audio.currentTime = 0;
-      } catch {}
-    }
-
-    audio.volume = isMuted ? 0 : (volume || 0.85);
-
-    // Multi-stage seek coordinator for iOS Safari:
-    // On iOS Safari, audio.currentTime must be set once metadata is loaded or when playback starts.
-    let seekApplied = false;
-    const applySeek = () => {
-      if (seekApplied || syncTime <= 0) return;
-      try {
-        if (Math.abs(audio.currentTime - syncTime) > 1.5) {
-          audio.currentTime = syncTime;
-          seekApplied = true;
-        }
-      } catch (err) {
-        console.warn('Seek attempt notice:', err);
-      }
-    };
-
-    if (syncTime > 0) {
-      if (audio.readyState >= 1) {
-        applySeek();
-      } else {
-        audio.addEventListener('loadedmetadata', applySeek, { once: true });
-        audio.addEventListener('canplay', applySeek, { once: true });
-      }
-      audio.addEventListener('playing', applySeek, { once: true });
-    }
-
-    if (!isSameSource) {
-      audio.load();
-    }
-
-    await audio.play();
-    setIsPlaying(true);
-    setIsLoading(false);
-
-    // Deferred seek verification for iOS Safari quirks
-    if (syncTime > 0) {
-      setTimeout(() => {
-        if (!seekApplied || audio.currentTime < 2) {
-          applySeek();
-        }
-      }, 250);
-
-      setTimeout(() => {
-        if (syncTime > 3 && audio.currentTime < 2) {
-          try {
-            audio.currentTime = syncTime;
-          } catch {}
-        }
-      }, 750);
-    }
-  };
-
-  // Auto-switch track when song changes in stationState while playing direct tracks
-  useEffect(() => {
-    if (isPlaying && audioRef.current) {
-      const currentSrc = audioRef.current.src || '';
-      const isLiveStream = currentSrc.includes('live') || currentSrc.includes('onrender.com');
-
-      if (!isLiveStream) {
-        radioStore.getSongs().then((songs) => {
-          const activeSong = songs.find(
-            (s) =>
-              (stationState.current_song_id && s.id === stationState.current_song_id) ||
-              (stationState.current_song_title && s.title.toLowerCase() === stationState.current_song_title.toLowerCase())
-          );
-          let targetUrl = stationState.current_song_url || activeSong?.file_url || '/songs/summer.mp3';
-          if (!targetUrl || targetUrl.includes('pixabay.com')) {
-            targetUrl = '/songs/summer.mp3';
-          }
-          if (audioRef.current && !audioRef.current.src.endsWith(targetUrl) && audioRef.current.src !== targetUrl) {
-            const syncTime = getLiveSongProgress(stationState);
-            playDirectTrack(targetUrl, syncTime).catch(console.warn);
-          }
-        });
-      }
-    }
-  }, [stationState.current_song_id, stationState.current_song_title, stationState.current_song_url, isPlaying]);
-
   // Initialize audio element with iOS-friendly attributes
   useEffect(() => {
     const audio = new Audio();
-    audio.preload = 'auto';
+    audio.preload = 'none';
     audio.setAttribute('playsinline', 'true');
     audio.setAttribute('webkit-playsinline', 'true');
     audioRef.current = audio;
@@ -301,6 +135,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     audio.addEventListener('playing', () => {
       setIsPlaying(true);
       setIsLoading(false);
+      setStatusNotice(null);
     });
 
     audio.addEventListener('canplay', () => {
@@ -308,102 +143,37 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     });
 
     audio.addEventListener('waiting', () => {
-      setIsLoading(true);
-    });
-
-    audio.addEventListener('stalled', () => {
-      console.warn('[Player Watchdog] Audio buffer stalled, waiting for data...');
-    });
-
-    // Handle track completion or live stream recycle
-    audio.addEventListener('ended', async () => {
-      const currentSrc = audio.src || '';
-      const isLive = checkIfLiveStream(currentSrc);
-      const current = radioStore.getStationState();
-
-      if (isLive) {
-        // If broadcaster is actively on air, reconnect with fresh timestamp
-        const isBroadcastingNow = Boolean(current.is_live || current.is_mic_active || current.current_song_title === 'DJ EN VIVO');
-        if (isBroadcastingNow) {
-          console.log('[Player Watchdog] Live stream connection recycled, auto-reconnecting...');
-          setTimeout(() => {
-            if (audioRef.current) {
-              audioRef.current.src = getBestLiveStreamUrl(audioRef.current);
-              audioRef.current.play().catch(console.warn);
-            }
-          }, 300);
-          return;
-        } else {
-          // Broadcaster stopped / disconnected -> immediately switch to continuous library music
-          console.log('[Player Watchdog] Transmisión en vivo cerrada por recarga/salida, pasando a música de biblioteca...');
-          const syncTime = getLiveSongProgress(current);
-          const fallbackUrl = current.current_song_url || '/songs/summer.mp3';
-          playDirectTrack(fallbackUrl, syncTime).catch(console.warn);
-          return;
-        }
+      if (isPlayingRef.current) {
+        setIsLoading(true);
       }
+    });
 
-      // If station is on air, NEVER advance library music; stay on the live stream!
-      if (current.is_live || current.is_mic_active || current.current_song_title === 'DJ EN VIVO') {
-        if (LIVE_STREAM_URL && audioRef.current) {
+    audio.addEventListener('ended', () => {
+      if (!isPlayingRef.current) return;
+      console.log('[Player] Stream live cerrado/reciclado, reconectando...');
+      setTimeout(() => {
+        if (audioRef.current && isPlayingRef.current) {
           audioRef.current.src = getBestLiveStreamUrl(audioRef.current);
           audioRef.current.play().catch(console.warn);
         }
-        return;
-      }
-
-      // Direct track completed -> advance smoothly to next track in rotation locally
-      // (WITHOUT calling updateStationState, which would overwrite the station state)
-      try {
-        const songs = await radioStore.getSongs();
-        if (songs && songs.length > 0) {
-          const currentIndex = songs.findIndex(
-            (s) =>
-              (current.current_song_id && s.id === current.current_song_id) ||
-              (current.current_song_title && s.title.toLowerCase() === current.current_song_title.toLowerCase())
-          );
-          const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % songs.length : 0;
-          const nextSong = songs[nextIndex] || songs[0];
-          const nextUrl = nextSong.file_url || '/songs/summer.mp3';
-
-          await playDirectTrack(nextUrl, 0);
-          return;
-        }
-      } catch (err) {
-        console.warn('Error advancing direct track:', err);
-      }
-
-      playDirectTrack('/songs/summer.mp3', 0).catch(console.warn);
+      }, 800);
     });
 
-    audio.addEventListener('error', (e) => {
-      console.warn('Audio connection notice, evaluating fallback:', e);
-      const currentSrc = audio.src || '';
-      const isLiveStream = checkIfLiveStream(currentSrc);
-      const current = radioStore.getStationState();
-
-      if (isLiveStream) {
-        const isBroadcastingNow = Boolean(current.is_live || current.is_mic_active || current.current_song_title === 'DJ EN VIVO');
-        if (isBroadcastingNow) {
-          // If HLS playlist is still initializing (first 2s of broadcast), retry HLS in 1.2s
-          const wasHls = currentSrc.includes('.m3u8');
-          console.warn(`[Player Watchdog] Live stream error (${wasHls ? 'HLS' : 'MP3'}), reconnecting...`);
-          setTimeout(() => {
-            if (audioRef.current) {
-              audioRef.current.src = getBestLiveStreamUrl(audioRef.current, false);
-              audioRef.current.play().catch(console.warn);
-            }
-          }, wasHls ? 1200 : 500);
-          return;
-        }
-
-        const syncTime = getLiveSongProgress(current);
-        const targetUrl = current.current_song_url || '/songs/summer.mp3';
-        playDirectTrack(targetUrl, syncTime).catch(console.warn);
-      } else {
-        const fallback = currentSrc.includes('summer') ? '/songs/flowers.mp3' : '/songs/summer.mp3';
-        playDirectTrack(fallback, 0).catch(console.warn);
+    audio.addEventListener('error', () => {
+      if (!isPlayingRef.current) {
+        setIsLoading(false);
+        return;
       }
+      const wasHls = (audio.src || '').includes('.m3u8');
+      console.warn(`[Player] Reconectando señal en vivo (${wasHls ? 'HLS' : 'MP3'})...`);
+      setTimeout(() => {
+        if (audioRef.current && isPlayingRef.current) {
+          audioRef.current.src = getBestLiveStreamUrl(audioRef.current, false);
+          audioRef.current.play().catch(() => {
+            setIsLoading(false);
+          });
+        }
+      }, wasHls ? 1500 : 1000);
     });
 
     return () => {
@@ -419,24 +189,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     }
   }, [volume, isMuted]);
 
-  // Gentle resynchronization for direct playback:
-  // Only sync if track changes or on massive drift (> 15s), avoiding audio micro-stutters during normal playback
-  useEffect(() => {
-    if (isPlaying && audioRef.current) {
-      const currentSrc = audioRef.current.src || '';
-      const isLiveStream = checkIfLiveStream(currentSrc);
-      if (!isLiveStream) {
-        const liveSec = getLiveSongProgress(stationState);
-        if (liveSec > 0 && Math.abs(audioRef.current.currentTime - liveSec) > 15) {
-          try {
-            audioRef.current.currentTime = liveSec;
-          } catch {}
-        }
-      }
-    }
-  }, [stationState.current_song_id, stationState.updated_at, isPlaying]);
-
-  // Active Playback Watchdog: Ensures audio keeps playing & auto-recovers from silent network stalls
+  // Active Live Stream Watchdog: Detects silent mobile 4G/5G freezes (>7.5s) and cleanly reconnects
   useEffect(() => {
     if (!isPlaying) return;
 
@@ -445,117 +198,41 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
 
     const interval = setInterval(() => {
       const audio = audioRef.current;
-      if (!audio) return;
+      if (!audio || !isPlayingRef.current) return;
 
-      const current = radioStore.getStationState();
-      const currentSrc = audio.src || '';
-      const isLiveStream = checkIfLiveStream(currentSrc);
-
-      const isBroadcastingNow = Boolean(current.is_live || current.is_mic_active || current.current_song_title === 'DJ EN VIVO');
-
-      // 1. If station is on air, guarantee listener is connected to the live stream (HLS on iOS, MP3 on others)
-      if (isBroadcastingNow) {
-        if (!isLiveStream) {
-          console.log('[Player Watchdog] Emisión en vivo detectada por watchdog, conectando al stream...');
-          frozenChecks = 0;
-          lastObservedTime = -1;
-          audio.src = getBestLiveStreamUrl(audio);
-          audio.play().catch(console.warn);
-          return;
-        }
-
-        // Detect silent network freeze (currentTime stuck for >= 7.5s on mobile 4G/5G)
-        if (!audio.paused) {
-          if (Math.abs(audio.currentTime - lastObservedTime) < 0.05) {
-            frozenChecks++;
-            if (frozenChecks >= 3) {
-              console.warn('[Player Watchdog] Stream congelado por red (>7.5s), reconectando limpiamente...');
-              frozenChecks = 0;
-              lastObservedTime = -1;
-              audio.src = getBestLiveStreamUrl(audio);
-              audio.play().catch(console.warn);
-              return;
-            }
-          } else {
+      if (!audio.paused) {
+        if (Math.abs(audio.currentTime - lastObservedTime) < 0.05) {
+          frozenChecks++;
+          if (frozenChecks >= 3) {
+            console.warn('[Player Watchdog] Señal congelada por red (>7.5s), reconectando...');
             frozenChecks = 0;
-            lastObservedTime = audio.currentTime;
+            lastObservedTime = -1;
+            audio.src = getBestLiveStreamUrl(audio);
+            audio.play().catch(console.warn);
           }
-        } else if (isPlaying && !isLoading) {
-          audio.play().catch(console.warn);
+        } else {
+          frozenChecks = 0;
+          lastObservedTime = audio.currentTime;
         }
-        return;
-      }
-
-      // 2. If user intended to play music, but the audio element paused unexpectedly (OS sleep, audio focus change, etc.)
-      if (audio.paused && !audio.ended && isPlaying && !isLoading) {
-        console.warn('[Player Watchdog] Detected unexpected pause during playback, resuming...');
-        audio.play().catch((err) => {
-          console.warn('[Player Watchdog] Auto-resume error, falling back to direct track:', err);
-          const syncTime = getLiveSongProgress(current);
-          const fallbackUrl = current.current_song_url || '/songs/summer.mp3';
-          playDirectTrack(fallbackUrl, syncTime).catch(console.warn);
-        });
+      } else if (!isLoading) {
+        audio.play().catch(console.warn);
       }
     }, 2500);
 
     return () => clearInterval(interval);
   }, [isPlaying, isLoading]);
 
-  // Screen unlock / VisibilityChange resync for mobile devices (iPhone Safari)
-  useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible' && isPlaying && audioRef.current) {
-        const currentSrc = audioRef.current.src || '';
-        const isLiveStream = checkIfLiveStream(currentSrc);
-        if (!isLiveStream) {
-          const liveSec = getLiveSongProgress(radioStore.getStationState());
-          if (liveSec > 0 && Math.abs(audioRef.current.currentTime - liveSec) > 4) {
-            try {
-              audioRef.current.currentTime = liveSec;
-            } catch {}
-          }
-        }
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, [isPlaying]);
-
-  // Real-time synchronization when station goes on air or leaves the air:
-  useEffect(() => {
-    if (isPlaying && audioRef.current && LIVE_STREAM_URL) {
-      const audio = audioRef.current;
-      const isLiveNow = Boolean(stationState.is_live || stationState.is_mic_active || stationState.current_song_title === 'DJ EN VIVO');
-      const currentSrc = audio.src || '';
-      const onLiveStream = checkIfLiveStream(currentSrc);
-
-      if (isLiveNow && !onLiveStream) {
-        console.log('[Player] Emisión en vivo iniciada desde el estudio, conectando al stream directo...');
-        audio.src = getBestLiveStreamUrl(audio);
-        audio.play().catch((err) => {
-          console.warn('Could not switch to live stream on broadcast active:', err);
-        });
-      } else if (!isLiveNow && onLiveStream) {
-        console.log('[Player] Emisión en vivo finalizada, pasando a música de biblioteca...');
-        const syncTime = getLiveSongProgress(stationState);
-        const targetUrl = stationState.current_song_url || '/songs/summer.mp3';
-        playDirectTrack(targetUrl, syncTime).catch(console.warn);
-      }
-    }
-  }, [stationState.is_mic_active, stationState.is_live, isPlaying]);
-
   // iOS Lock Screen & Control Center integration (Media Session API)
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
     try {
-      const isDj = Boolean(stationState.is_mic_active || stationState.current_song_title === 'DJ EN VIVO');
       navigator.mediaSession.metadata = new MediaMetadata({
-        title: isDj ? 'DJ EN VIVO · Radio Nexo' : (stationState.current_song_title || 'Radio Nexo'),
-        artist: isDj ? 'Sesión en Directo' : (stationState.current_song_artist || 'Radio Nexo'),
-        album: 'RADIO NEXO · En Vivo',
+        title: 'RADIO NEXO · EN VIVO',
+        artist: 'Transmisión en Directo',
+        album: 'RADIO NEXO',
         artwork: [
           {
-            src: stationState.current_song_cover || '/cover_default.webp',
+            src: '/cover_default.webp',
             sizes: '512x512',
             type: 'image/webp',
           },
@@ -564,6 +241,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
       navigator.mediaSession.setActionHandler('play', () => {
         if (audioRef.current) {
+          audioRef.current.src = getBestLiveStreamUrl(audioRef.current);
           audioRef.current.play().then(() => setIsPlaying(true)).catch(console.warn);
         }
       });
@@ -574,77 +252,54 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
         }
       });
     } catch {}
-  }, [stationState.current_song_title, stationState.current_song_artist, stationState.current_song_cover, stationState.is_mic_active, isPlaying]);
+  }, [isPlaying]);
 
+  // 100% Synchronous Play/Pause handler (iOS Safari user-gesture safe)
   const togglePlay = async () => {
-    if (!audioRef.current) return;
+    const audio = audioRef.current;
+    if (!audio) return;
 
     if (isPlaying) {
-      audioRef.current.pause();
+      audio.pause();
+      audio.src = '';
       setIsPlaying(false);
+      setIsLoading(false);
+      setStatusNotice(null);
       return;
     }
 
     setIsLoading(true);
-    const audio = audioRef.current;
-
-    // CRITICAL FOR iOS SAFARI:
-    // Call audio.play() SYNCHRONOUSLY inside the tap handler BEFORE any `await` (like radioStore.getSongs())
-    // so iOS Safari never expires the user-gesture activation token!
-    if (LIVE_STREAM_URL && (stationState.is_live || stationState.is_mic_active)) {
-      try {
-        const liveUrl = getBestLiveStreamUrl(audio);
-        audio.src = liveUrl;
-        audio.volume = isMuted ? 0 : (volume || 0.85);
-        await audio.play();
-        setIsPlaying(true);
-        setIsLoading(false);
-        return;
-      } catch (err) {
-        console.warn('Primary live stream attempt failed, trying MP3 fallback:', err);
-        // If HLS was still warming up on iOS, try MP3 directly before falling back to local track
-        if (isAppleHlsDevice(audio)) {
-          try {
-            audio.src = getBestLiveStreamUrl(audio, true);
-            audio.volume = isMuted ? 0 : (volume || 0.85);
-            await audio.play();
-            setIsPlaying(true);
-            setIsLoading(false);
-            return;
-          } catch (mp3Err) {
-            console.warn('MP3 live fallback also unavailable:', mp3Err);
-          }
-        }
-      }
-    }
-
-    // Fallback: Plays the active song synchronized to the exact current live progress ("en donde vamos")!
-    const songs = await radioStore.getSongs();
-    const activeSong = songs.find(
-      (s) =>
-        (stationState.current_song_id && s.id === stationState.current_song_id) ||
-        (stationState.current_song_title && s.title.toLowerCase() === stationState.current_song_title.toLowerCase())
-    ) || songs[0];
-    let targetUrl = stationState.current_song_url || activeSong?.file_url || '/songs/summer.mp3';
-    if (!targetUrl || targetUrl.includes('pixabay.com')) {
-      targetUrl = '/songs/summer.mp3';
-    }
-    const syncTime = getLiveSongProgress(stationState);
+    setStatusNotice(null);
 
     try {
-      await playDirectTrack(targetUrl, syncTime);
-    } catch (playErr) {
-      console.warn('Playback error with targetUrl, retrying local fallback:', playErr);
-      try {
-        await playDirectTrack('/songs/summer.mp3', syncTime);
-      } catch (e2) {
-        console.error('Final fallback error:', e2);
-        setIsLoading(false);
+      // Connect immediately and synchronously to preserve iOS Safari gesture token
+      audio.src = getBestLiveStreamUrl(audio);
+      audio.volume = isMuted ? 0 : (volume || 0.85);
+      await audio.play();
+      setIsPlaying(true);
+      setIsLoading(false);
+    } catch (err) {
+      console.warn('Error iniciando stream principal:', err);
+      // If HLS was still warming up on iOS, try MP3 fallback directly
+      if (isAppleHlsDevice(audio)) {
+        try {
+          audio.src = getBestLiveStreamUrl(audio, true);
+          audio.volume = isMuted ? 0 : (volume || 0.85);
+          await audio.play();
+          setIsPlaying(true);
+          setIsLoading(false);
+          return;
+        } catch {}
       }
+      setIsPlaying(false);
+      setIsLoading(false);
+      setStatusNotice('La transmisión en vivo no está activa en este momento.');
+      setTimeout(() => setStatusNotice(null), 4000);
     }
   };
 
   const isDjLive = Boolean(
+    stationState.is_live ||
     stationState.is_mic_active ||
     stationState.current_song_title === 'DJ EN VIVO'
   );
@@ -654,14 +309,18 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       {/* Vinyl Aura & Rotating Center Disc */}
       <div className="relative flex items-center justify-center my-2 sm:my-3 group">
         {/* Radial Dotted Audio Glow Ring */}
-        <div className={`absolute w-60 h-60 sm:w-72 sm:h-72 lg:w-80 lg:h-80 rounded-full border border-dashed border-[#e5b45f]/25 transition-all duration-1000 ${
-          isPlaying ? 'animate-pulse-gold scale-105' : 'opacity-30 scale-95'
-        }`} />
+        <div
+          className={`absolute w-60 h-60 sm:w-72 sm:h-72 lg:w-80 lg:h-80 rounded-full border border-dashed border-[#e5b45f]/25 transition-all duration-1000 ${
+            isPlaying ? 'animate-pulse-gold scale-105' : 'opacity-30 scale-95'
+          }`}
+        />
 
         {/* Ambient Warm Golden Aura */}
-        <div className={`absolute w-52 h-52 sm:w-64 sm:h-64 lg:w-72 lg:h-72 rounded-full bg-[#e5b45f]/15 blur-2xl transition-opacity duration-700 ${
-          isPlaying ? 'opacity-100' : 'opacity-20'
-        }`} />
+        <div
+          className={`absolute w-52 h-52 sm:w-64 sm:h-64 lg:w-72 lg:h-72 rounded-full bg-[#e5b45f]/15 blur-2xl transition-opacity duration-700 ${
+            isPlaying ? 'opacity-100' : 'opacity-20'
+          }`}
+        />
 
         {/* Dotted Accent Ring */}
         <div className="absolute w-[200px] h-[200px] sm:w-[250px] sm:h-[250px] lg:w-[270px] lg:h-[270px] rounded-full border border-[#e5b45f]/30 flex items-center justify-center">
@@ -671,16 +330,15 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
         {/* Outer Golden Border Rim */}
         <div className="relative w-44 h-44 sm:w-56 sm:h-56 lg:w-64 lg:h-64 rounded-full p-1.5 bg-gradient-to-tr from-[#d9a149] via-[#f3c87a] to-[#966b26] shadow-2xl shadow-[#e5b45f]/30">
           {/* Inner Disc / Cover Art Container */}
-          <div className={`w-full h-full rounded-full overflow-hidden relative shadow-inner bg-black ${
-            isPlaying ? 'animate-spin-slow' : ''
-          }`}>
+          <div
+            className={`w-full h-full rounded-full overflow-hidden relative shadow-inner bg-black ${
+              isPlaying ? 'animate-spin-slow' : ''
+            }`}
+          >
             <img
-              src={stationState.current_song_cover || '/cover_default.webp'}
-              alt={stationState.current_song_title}
+              src="/cover_default.webp"
+              alt="Radio Nexo En Vivo"
               className="w-full h-full object-cover object-center filter brightness-90 contrast-105"
-              onError={(e) => {
-                (e.target as HTMLImageElement).src = '/cover_default.webp';
-              }}
             />
             {/* Dark vinyl grooves overlay */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30 pointer-events-none" />
@@ -690,20 +348,20 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
               <div className="w-2 h-2 rounded-full bg-[#e5b45f]" />
             </div>
 
-            {/* Mockup Typography inside the disc */}
+            {/* Disc Center Typography */}
             <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-3 pointer-events-none">
               <span className="text-[9px] sm:text-[11px] font-semibold tracking-widest uppercase text-white/90 drop-shadow-md">
-                {isDjLive ? 'RADIO NEXO' : stationState.current_song_artist.toUpperCase()}
+                RADIO NEXO
               </span>
               <span className="text-xs sm:text-lg font-bold tracking-wider uppercase text-white drop-shadow-lg truncate max-w-[85%]">
-                {isDjLive ? 'DJ EN VIVO' : stationState.current_song_title.toUpperCase()}
+                EN VIVO
               </span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Song Metadata Display / Live DJ Indicator */}
+      {/* Station Live Metadata Display */}
       <div className="text-center mt-1 sm:mt-2 z-10">
         <div className="flex items-center justify-center gap-2">
           {isDjLive && (
@@ -712,50 +370,30 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
               <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500" />
             </span>
           )}
-          <h2 className={`text-xl sm:text-3xl font-bold tracking-tight drop-shadow-md truncate max-w-lg ${
-            isDjLive ? 'text-rose-400 font-black' : 'text-white'
-          }`}>
-            {isDjLive ? 'DJ EN VIVO' : stationState.current_song_title}
+          <h2
+            className={`text-xl sm:text-3xl font-bold tracking-tight drop-shadow-md truncate max-w-lg ${
+              isDjLive ? 'text-rose-400 font-black' : 'text-white'
+            }`}
+          >
+            {isDjLive ? 'DJ EN VIVO' : 'RADIO NEXO'}
           </h2>
         </div>
         <p className="text-xs sm:text-sm font-medium text-[#e5b45f] mt-0.5 tracking-wide">
-          {isDjLive ? 'Sesión en Directo · Radio Nexo' : stationState.current_song_artist}
+          Sesión en Directo · Radio Nexo
         </p>
       </div>
 
+      {statusNotice && (
+        <div className="mt-2 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] font-medium z-10">
+          {statusNotice}
+        </div>
+      )}
+
       {/* Primary Player Controls */}
       <div className="flex items-center justify-center gap-5 sm:gap-7 mt-3 sm:mt-4 z-10">
-        {/* Like Button with Toast */}
-        <div className="relative flex items-center justify-center">
-          <button
-            onClick={handleToggleFavorite}
-            className={`p-2.5 sm:p-3 rounded-full transition-all duration-200 active:scale-90 ${
-              isLiked
-                ? 'text-rose-500 hover:text-rose-400 bg-rose-500/10'
-                : 'text-gray-400 hover:text-white hover:bg-white/5'
-            }`}
-            title={isLiked ? 'Quitar de la playlist de favoritas' : 'Guardar en la playlist de favoritas'}
-            aria-label={isLiked ? 'Quitar de la playlist de favoritas' : 'Guardar en la playlist de favoritas'}
-          >
-            <Heart
-              className={`w-5 h-5 sm:w-6 sm:h-6 transition-transform duration-300 ${
-                isLiked ? 'fill-current' : ''
-              } ${heartAnimation ? 'scale-125 text-rose-500 animate-pulse' : ''}`}
-            />
-          </button>
-
-          {likeToast && (
-            <div className="absolute -top-10 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-neutral-900/95 border border-white/15 text-[11px] font-semibold text-white shadow-2xl flex items-center gap-1.5 whitespace-nowrap animate-in fade-in zoom-in-95 duration-200 pointer-events-none z-30">
-              <Heart className="w-3 h-3 text-rose-500 fill-current" />
-              <span>{likeToast}</span>
-            </div>
-          )}
-        </div>
-
         {/* Big Glowing Play / Pause Button */}
         <button
           onClick={togglePlay}
-          disabled={isLoading}
           aria-label={isPlaying ? 'Pausar transmisión' : 'Escuchar en vivo'}
           className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center transition-all duration-300 transform active:scale-95 cursor-pointer ${
             isPlaying
@@ -814,22 +452,30 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
 
       {/* Live Badge Status & Song Request Button */}
       <div className="mt-3 sm:mt-4 flex flex-wrap items-center justify-center gap-2.5 z-10">
-        <div className={`inline-flex items-center gap-2 px-3.5 py-1 rounded-full border backdrop-blur-md transition-all ${
-          isDjLive
-            ? 'border-rose-500/60 bg-rose-500/15 shadow-sm shadow-rose-500/30'
-            : 'border-[#e5b45f]/40 bg-[#e5b45f]/10'
-        }`}>
+        <div
+          className={`inline-flex items-center gap-2 px-3.5 py-1 rounded-full border backdrop-blur-md transition-all ${
+            isDjLive
+              ? 'border-rose-500/60 bg-rose-500/15 shadow-sm shadow-rose-500/30'
+              : 'border-[#e5b45f]/40 bg-[#e5b45f]/10'
+          }`}
+        >
           <span className="relative flex h-2 w-2">
-            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-              isDjLive ? 'bg-rose-500' : 'bg-[#e5b45f]'
-            }`} />
-            <span className={`relative inline-flex rounded-full h-2 w-2 ${
-              isDjLive ? 'bg-rose-500' : 'bg-[#e5b45f]'
-            }`} />
+            <span
+              className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                isDjLive ? 'bg-rose-500' : 'bg-[#e5b45f]'
+              }`}
+            />
+            <span
+              className={`relative inline-flex rounded-full h-2 w-2 ${
+                isDjLive ? 'bg-rose-500' : 'bg-[#e5b45f]'
+              }`}
+            />
           </span>
-          <span className={`text-[11px] font-bold tracking-wider uppercase ${
-            isDjLive ? 'text-rose-400' : 'text-[#e5b45f]'
-          }`}>
+          <span
+            className={`text-[11px] font-bold tracking-wider uppercase ${
+              isDjLive ? 'text-rose-400' : 'text-[#e5b45f]'
+            }`}
+          >
             {isDjLive ? '🔴 AL AIRE · DJ EN VIVO' : 'EN VIVO · RADIO NEXO'}
           </span>
         </div>

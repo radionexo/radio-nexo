@@ -100,11 +100,9 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
     };
   }, []);
 
-  // Restore music transmission when authenticated
+  // Keep mic off on fresh studio load until DJ enters on-air
   useEffect(() => {
     if (isAuthenticated) {
-      audioEngine.restoreSession();
-      // Only clear mic state if the engine isn't currently active
       if (!audioEngine.getState().isMicOnAir) {
         radioStore.updateStationState({ is_mic_active: false });
       }
@@ -197,8 +195,6 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
 
   const navItems: { label: string; href: string; icon: any; match: string[]; disabled?: boolean; onClick?: () => void }[] = [
     { label: 'Cabina', href: '/studio', icon: Mic, match: ['/studio', '/studio/live'] },
-    { label: 'Biblioteca', href: '/studio/library', icon: Music2, match: ['/studio/library', '/studio/upload'] },
-    { label: 'Playlists', href: '/studio/playlists', icon: ListMusic, match: ['/studio/playlists'] },
     { label: 'Solicitudes', href: '/studio/requests', icon: Inbox, match: ['/studio/requests'] },
     { label: 'Programación', href: '#', icon: Calendar, match: [], disabled: true },
     { label: 'Reportes', href: '#', icon: BarChart3, match: [], disabled: true },
