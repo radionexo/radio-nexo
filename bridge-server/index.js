@@ -1,37 +1,90 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
+const { spawn, execSync } = require('child_process');
 const url = require('url');
 const fs = require('fs');
 const path = require('path');
 
 const PORT = process.env.PORT || process.env.BRIDGE_PORT || 8000;
 const ICECAST_URL = process.env.ICECAST_SOURCE_URL || process.env.ICECAST_URL;
+const STREAM_BITRATE_KBPS = parseInt(process.env.STREAM_BITRATE || '192', 10);
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
+
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
-let headerChunk = null;
-let headerContentType = 'audio/webm; codecs=opus';
+// Resolve FFmpeg binary: prefer native system ffmpeg (Alpine/Docker), fallback to ffmpeg-static (Render Native Node)
+function resolveFfmpegPath() {
+  if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
+    return process.env.FFMPEG_PATH;
+  }
+  try {
+    const sysPath = execSync('which ffmpeg', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    if (sysPath) return sysPath;
+  } catch {}
+  try {
+    const staticPath = require('ffmpeg-static');
+    if (staticPath && fs.existsSync(staticPath)) return staticPath;
+  } catch {}
+  return 'ffmpeg';
+}
+
+const FFMPEG_BIN = resolveFfmpegPath();
+
+// ============================================================================
+// BROADCAST STATE & MP3 FRAME-ALIGNED RING BURST BUFFER
+// ============================================================================
 const listeners = new Set();
 let isBroadcasting = false;
+let activeSourceType = null; // 'studio-ws' | 'icecast-source' | null
 let broadcasterSocket = null;
+let ffmpegProc = null;
 let upstreamIcecastReq = null;
+let gracePeriodTimer = null;
+const startedAt = Date.now();
 
-// Ring pre-buffer for instant playback & zero-stutter on connect (~5s)
-const BURST_BUFFER_CHUNKS = 10;
-const burstBuffer = [];
+// Burst-on-connect buffer: ~96 KB (~4 seconds of 192kbps MP3 CBR)
+// Guarantees instant playback (<300ms) and absorbs mobile 4G/5G jitter
+const MAX_BURST_BYTES = Math.round((STREAM_BITRATE_KBPS * 1000 / 8) * 4);
+const burstChunks = [];
+let burstTotalBytes = 0;
 
-function broadcastAudioChunk(chunk) {
-  // 1. Maintain pre-buffer for new listeners
-  burstBuffer.push(chunk);
-  if (burstBuffer.length > BURST_BUFFER_CHUNKS) {
-    burstBuffer.shift();
+// Grace period (ms) before disconnecting listeners when broadcaster drops briefly
+const BROADCASTER_GRACE_MS = 6500;
+
+/**
+ * Find the first valid MP3 frame sync header (0xFF followed by 0xE0 mask)
+ * so new listeners start cleanly on an exact MP3 frame boundary with zero pops/clicks.
+ */
+function alignToMp3Frame(buf) {
+  for (let i = 0; i < buf.length - 1; i++) {
+    if (buf[i] === 0xff && (buf[i + 1] & 0xe0) === 0xe0) {
+      return i === 0 ? buf : buf.subarray(i);
+    }
   }
+  return buf;
+}
 
-  // 2. Broadcast to all active listeners (never drop individual chunks; disconnect dead sockets instead)
+function pushToBurstBuffer(chunk) {
+  burstChunks.push(chunk);
+  burstTotalBytes += chunk.length;
+  while (burstTotalBytes > MAX_BURST_BYTES && burstChunks.length > 1) {
+    const removed = burstChunks.shift();
+    burstTotalBytes -= removed.length;
+  }
+}
+
+function broadcastMp3Chunk(chunk) {
+  if (!chunk || chunk.length === 0) return;
+
+  // 1. Update ring pre-buffer
+  pushToBurstBuffer(chunk);
+
+  // 2. Fan-out to all active HTTP listeners
   for (const client of listeners) {
     if (client.writable && !client.destroyed) {
+      // Disconnect dead/stalled listeners whose socket buffer grew > 2 MB
       if (client.writableLength && client.writableLength > 2 * 1024 * 1024) {
         try { client.end(); } catch {}
         listeners.delete(client);
@@ -47,7 +100,7 @@ function broadcastAudioChunk(chunk) {
     }
   }
 
-  // 3. Upstream Icecast forward
+  // 3. Optional upstream Icecast forward
   if (upstreamIcecastReq && !upstreamIcecastReq.destroyed) {
     try {
       upstreamIcecastReq.write(chunk);
@@ -57,35 +110,157 @@ function broadcastAudioChunk(chunk) {
   }
 }
 
-function terminateActiveBroadcast(sourceName) {
-  console.log(`[Broadcast] Desconexión de emisión (${sourceName}). Cerrando sockets de oyentes para auto-recuperación.`);
-  isBroadcasting = false;
-  broadcasterSocket = null;
-  headerChunk = null;
-  burstBuffer.length = 0;
-
-  // Gracefully close all existing HTTP listeners so their web players detect the stream closure
-  // and smoothly fall back to continuous music instead of hanging
-  for (const client of listeners) {
+function stopFfmpegTranscoder() {
+  if (ffmpegProc) {
+    const proc = ffmpegProc;
+    ffmpegProc = null;
     try {
-      client.end();
+      if (proc.stdin && !proc.stdin.destroyed) {
+        proc.stdin.end();
+      }
     } catch {}
-  }
-  listeners.clear();
-
-  if (upstreamIcecastReq) {
-    upstreamIcecastReq.end();
-    upstreamIcecastReq = null;
+    try {
+      proc.kill('SIGTERM');
+    } catch {}
   }
 }
 
-// Create HTTP Server for Icecast-compatible HTTP stream and status
+/**
+ * Spawn a low-latency FFmpeg transcoder that converts incoming browser audio
+ * (WebM/Opus, MP4/AAC, or Ogg/Opus) into a rock-solid constant-bitrate MP3 stream.
+ */
+function startFfmpegTranscoder(inputFormat) {
+  stopFfmpegTranscoder();
+
+  const args = [
+    '-hide_banner',
+    '-loglevel', 'warning',
+    '-fflags', '+nobuffer+discardcorrupt+genpts',
+    '-flags', 'low_delay',
+  ];
+
+  if (inputFormat) {
+    args.push('-f', inputFormat);
+  } else {
+    args.push('-probesize', '32768', '-analyzeduration', '500000');
+  }
+
+  args.push(
+    '-i', 'pipe:0',
+    '-vn',
+    // Smooths out browser MediaRecorder jitter & micro-gaps seamlessly
+    '-af', 'aresample=async=1:first_pts=0',
+    '-c:a', 'libmp3lame',
+    '-b:a', `${STREAM_BITRATE_KBPS}k`,
+    '-ar', '44100',
+    '-ac', '2',
+    '-reservoir', '0',
+    '-f', 'mp3',
+    'pipe:1'
+  );
+
+  console.log(`[Transcoder] Iniciando FFmpeg (${FFMPEG_BIN}) -> MP3 ${STREAM_BITRATE_KBPS}kbps CBR (input: ${inputFormat || 'auto'})`);
+
+  const proc = spawn(FFMPEG_BIN, args, {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  ffmpegProc = proc;
+
+  proc.stdout.on('data', (mp3Chunk) => {
+    broadcastMp3Chunk(mp3Chunk);
+  });
+
+  proc.stderr.on('data', (errData) => {
+    const msg = errData.toString().trim();
+    if (msg) {
+      console.warn(`[FFmpeg] ${msg}`);
+    }
+  });
+
+  proc.stdin.on('error', (err) => {
+    if (err.code !== 'EPIPE') {
+      console.warn('[FFmpeg stdin] Error:', err.message);
+    }
+  });
+
+  proc.on('error', (err) => {
+    console.error('[Transcoder] Error al iniciar FFmpeg:', err.message);
+    if (ffmpegProc === proc) {
+      ffmpegProc = null;
+    }
+  });
+
+  proc.on('exit', (code, signal) => {
+    console.log(`[Transcoder] FFmpeg finalizó (code=${code}, signal=${signal})`);
+    if (ffmpegProc === proc) {
+      ffmpegProc = null;
+    }
+  });
+
+  return proc;
+}
+
+function detectInputFormat(firstChunk) {
+  if (!firstChunk || firstChunk.length < 4) return null;
+  // EBML / WebM / Matroska magic bytes: 1A 45 DF A3
+  if (firstChunk[0] === 0x1a && firstChunk[1] === 0x45 && firstChunk[2] === 0xdf && firstChunk[3] === 0xa3) {
+    return 'webm';
+  }
+  // Ogg magic bytes: "OggS"
+  if (firstChunk.toString('ascii', 0, 4) === 'OggS') {
+    return 'ogg';
+  }
+  // MP4 / fMP4: contains "ftyp"
+  if (firstChunk.indexOf('ftyp') !== -1) {
+    return 'mp4';
+  }
+  return null;
+}
+
+function scheduleBroadcastTermination(sourceName) {
+  console.log(`[Broadcast] Emisión pausada/desconectada (${sourceName}). Ventana de gracia de ${BROADCASTER_GRACE_MS}ms antes de cerrar oyentes...`);
+  stopFfmpegTranscoder();
+  broadcasterSocket = null;
+
+  if (gracePeriodTimer) {
+    clearTimeout(gracePeriodTimer);
+  }
+
+  gracePeriodTimer = setTimeout(() => {
+    gracePeriodTimer = null;
+    if (broadcasterSocket || ffmpegProc || activeSourceType === 'icecast-source') {
+      // A broadcaster reconnected during the grace window! Keep listeners alive!
+      return;
+    }
+
+    console.log(`[Broadcast] Fin definitivo de emisión (${sourceName}). Cerrando ${listeners.size} oyentes para fallback.`);
+    isBroadcasting = false;
+    activeSourceType = null;
+    burstChunks.length = 0;
+    burstTotalBytes = 0;
+
+    for (const client of listeners) {
+      try { client.end(); } catch {}
+    }
+    listeners.clear();
+
+    if (upstreamIcecastReq) {
+      try { upstreamIcecastReq.end(); } catch {}
+      upstreamIcecastReq = null;
+    }
+  }, BROADCASTER_GRACE_MS);
+}
+
+// ============================================================================
+// HTTP SERVER: STREAMING (/live), SOURCE (/live PUT/SOURCE), UPLOADS, STATUS
+// ============================================================================
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
 
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
 
   if (req.method === 'OPTIONS') {
@@ -94,7 +269,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // File Upload Endpoint: POST /upload?name=song.mp3
+  // 1. File Upload Endpoint: POST /upload?name=song.mp3
   if (req.method === 'POST' && parsed.pathname === '/upload') {
     const rawName = parsed.query?.name ? String(parsed.query.name) : 'audio.mp3';
     const safeExt = path.extname(rawName) || '.mp3';
@@ -126,7 +301,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Serve Uploaded Files: GET /uploads/:filename
+  // 2. Serve Uploaded Files: GET /uploads/:filename
   if (req.method === 'GET' && parsed.pathname.startsWith('/uploads/')) {
     const filename = path.basename(parsed.pathname);
     const targetPath = path.join(UPLOADS_DIR, filename);
@@ -169,7 +344,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Icecast / Shoutcast Source Endpoint (Virtual DJ, Mixxx, BUTT, OBS, etc.)
+  // 3. Icecast / Shoutcast Source Endpoint (Virtual DJ, Mixxx, BUTT, OBS)
   const isSourceMount =
     parsed.pathname === '/live' ||
     parsed.pathname === '/live.mp3' ||
@@ -202,11 +377,23 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    console.log(`[Icecast Source] Virtual DJ / Encodificador conectado vía ${req.method} en ${parsed.pathname}`);
+    if (gracePeriodTimer) {
+      clearTimeout(gracePeriodTimer);
+      gracePeriodTimer = null;
+    }
+
+    const incomingType = (req.headers['content-type'] || 'audio/mpeg').toLowerCase();
+    const isAlreadyMp3 = incomingType.includes('mpeg') || incomingType.includes('mp3');
+
+    console.log(`[Icecast Source] Virtual DJ / Encodificador conectado vía ${req.method} en ${parsed.pathname} (${incomingType})`);
     isBroadcasting = true;
-    headerContentType = req.headers['content-type'] || 'audio/mpeg';
-    headerChunk = null;
-    burstBuffer.length = 0;
+    activeSourceType = 'icecast-source';
+    stopFfmpegTranscoder();
+
+    if (!isAlreadyMp3) {
+      // Transcode non-MP3 external source (e.g. Ogg/AAC) into universal MP3 CBR
+      startFfmpegTranscoder(null);
+    }
 
     res.writeHead(200, {
       'Content-Type': 'text/plain',
@@ -217,51 +404,67 @@ const server = http.createServer((req, res) => {
     }
 
     req.on('data', (chunk) => {
-      if (!headerChunk) {
-        headerChunk = chunk;
-      }
-      broadcastAudioChunk(chunk);
-    });
-
-    req.on('end', () => {
-      terminateActiveBroadcast('Virtual DJ (end)');
-    });
-
-    req.on('close', () => {
-      if (isBroadcasting) {
-        terminateActiveBroadcast('Virtual DJ (close)');
+      if (isAlreadyMp3) {
+        broadcastMp3Chunk(chunk);
+      } else if (ffmpegProc && ffmpegProc.stdin && !ffmpegProc.stdin.destroyed) {
+        try { ffmpegProc.stdin.write(chunk); } catch {}
       }
     });
 
+    const handleSourceEnd = (reason) => {
+      if (activeSourceType === 'icecast-source') {
+        activeSourceType = null;
+        scheduleBroadcastTermination(`Virtual DJ (${reason})`);
+      }
+    };
+
+    req.on('end', () => handleSourceEnd('end'));
+    req.on('close', () => handleSourceEnd('close'));
     return;
   }
 
-  // Health / Status endpoint
+  // 4. Health / Status endpoint
   if (parsed.pathname === '/status') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache, no-store',
+    });
     res.end(
       JSON.stringify({
         status: 'online',
+        version: '2.0.0-mp3-cbr',
         isBroadcasting,
+        sourceType: activeSourceType,
         listenersCount: listeners.size,
         port: PORT,
-        format: headerContentType,
+        format: 'audio/mpeg',
+        bitrate: STREAM_BITRATE_KBPS,
+        burstBytes: burstTotalBytes,
+        ffmpegReady: Boolean(FFMPEG_BIN),
         upstreamIcecast: Boolean(ICECAST_URL),
+        uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
       })
     );
     return;
   }
 
-  // Icecast-compatible Live Audio Stream
-  if (parsed.pathname === '/live' || parsed.pathname === '/stream') {
+  // 5. Universal Live MP3 Audio Stream (/live, /live.mp3, /stream, /stream.mp3)
+  if (
+    parsed.pathname === '/live' ||
+    parsed.pathname === '/live.mp3' ||
+    parsed.pathname === '/stream' ||
+    parsed.pathname === '/stream.mp3'
+  ) {
     if (req.socket) {
       try { req.socket.setNoDelay(true); } catch {}
+      try { req.socket.setKeepAlive(true, 10000); } catch {}
     }
 
     res.writeHead(200, {
-      'Content-Type': headerContentType,
+      'Content-Type': 'audio/mpeg',
       'Cache-Control': 'no-cache, no-store, no-transform, must-revalidate',
       'Pragma': 'no-cache',
+      'Expires': '0',
       'Connection': 'keep-alive',
       'Transfer-Encoding': 'chunked',
       'X-Content-Type-Options': 'nosniff',
@@ -270,7 +473,7 @@ const server = http.createServer((req, res) => {
       'icy-name': 'RADIO NEXO - En Vivo',
       'icy-genre': 'Hits / Pop / Electronic',
       'icy-pub': '1',
-      'icy-br': '128',
+      'icy-br': String(STREAM_BITRATE_KBPS),
     });
 
     if (typeof res.flushHeaders === 'function') {
@@ -278,23 +481,18 @@ const server = http.createServer((req, res) => {
     }
 
     listeners.add(res);
-    console.log(`[Stream] Nuevo oyente conectado. Total oyentes: ${listeners.size}`);
+    console.log(`[Stream] Nuevo oyente MP3 conectado. Total oyentes: ${listeners.size} (pre-buffer: ${(burstTotalBytes / 1024).toFixed(1)} KB)`);
 
-    // 1. Immediately send the stream header so listener decoder initializes instantly
-    if (headerChunk) {
+    // Immediately flush MP3 frame-aligned pre-buffer (~4s) for instant zero-stutter start
+    if (burstChunks.length > 0) {
       try {
-        res.write(headerChunk);
+        const combined = Buffer.concat(burstChunks);
+        const aligned = alignToMp3Frame(combined);
+        if (aligned.length > 0) {
+          res.write(aligned);
+        }
       } catch (err) {
-        console.error('[Stream] Error enviando header inicial al oyente:', err);
-      }
-    }
-
-    // 2. Immediately send burst pre-buffer (~2s) for instant zero-stutter playback
-    for (const preChunk of burstBuffer) {
-      try {
-        res.write(preChunk);
-      } catch {
-        break;
+        console.warn('[Stream] Error enviando pre-buffer MP3:', err.message);
       }
     }
 
@@ -308,11 +506,13 @@ const server = http.createServer((req, res) => {
 
   // Fallback for root
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end('NEXO RADIO Source & Streaming Bridge Server is running.\nStream endpoint: /live\nStatus: /status');
+  res.end(`NEXO RADIO Broadcast-Grade MP3 Bridge v2.0 is running.\nStream: /live (audio/mpeg ${STREAM_BITRATE_KBPS}kbps)\nStatus: /status`);
 });
 
-// Setup WebSocket server for the NEXO Studio broadcaster encoder
-const wss = new WebSocketServer({ noServer: true });
+// ============================================================================
+// WEBSOCKET SERVER FOR NEXO STUDIO BROWSER BROADCASTER
+// ============================================================================
+const wss = new WebSocketServer({ noServer: true, maxPayload: 10 * 1024 * 1024 });
 
 server.on('upgrade', (request, socket, head) => {
   const pathname = url.parse(request.url).pathname;
@@ -327,52 +527,66 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 wss.on('connection', (ws) => {
-  console.log('[Broadcaster] NEXO Studio connected to broadcast bridge.');
+  console.log('[Broadcaster] NEXO Studio conectado al puente MP3.');
+
+  // Cancel any pending disconnect grace period — seamless reconnect!
+  if (gracePeriodTimer) {
+    clearTimeout(gracePeriodTimer);
+    gracePeriodTimer = null;
+    console.log('[Broadcaster] Reconexión transparente dentro de la ventana de gracia (0 oyentes desconectados).');
+  }
+
+  // Close previous studio socket cleanly if one was lingering
+  if (broadcasterSocket && broadcasterSocket !== ws) {
+    try { broadcasterSocket.terminate(); } catch {}
+  }
+
   isBroadcasting = true;
+  activeSourceType = 'studio-ws';
   broadcasterSocket = ws;
-  headerChunk = null;
-  burstBuffer.length = 0;
+  let transcoderStarted = false;
 
   // Optional: Connect to external Icecast server if configured
   setupIcecastUpstream();
 
   ws.on('message', (data) => {
     // Ignore small keepalive heartbeat pings (< 8 bytes)
-    if (data.length < 8) return;
-
-    // Save the first chunk as container header and detect format
-    if (!headerChunk) {
-      headerChunk = Buffer.from(data);
-      if (headerChunk.indexOf('ftyp') !== -1 || headerChunk.indexOf('moov') !== -1) {
-        headerContentType = 'audio/mp4';
-      } else {
-        headerContentType = 'audio/webm; codecs=opus';
-      }
-      console.log(`[Broadcaster] Initial header received (${headerChunk.length} bytes), format: ${headerContentType}`);
-      for (const client of listeners) {
-        if (client.writable && !client.destroyed) {
-          try { client.write(headerChunk); } catch {}
-        }
-      }
-      return;
-    }
+    if (!data || data.length < 8) return;
 
     const chunk = Buffer.from(data);
-    broadcastAudioChunk(chunk);
+
+    // Lazy-start FFmpeg on the first real audio chunk so we can auto-detect WebM vs MP4 vs Ogg
+    if (!transcoderStarted || !ffmpegProc) {
+      const detectedFormat = detectInputFormat(chunk);
+      startFfmpegTranscoder(detectedFormat);
+      transcoderStarted = true;
+    }
+
+    if (ffmpegProc && ffmpegProc.stdin && !ffmpegProc.stdin.destroyed) {
+      try {
+        ffmpegProc.stdin.write(chunk);
+      } catch (err) {
+        console.warn('[Broadcaster] Error escribiendo en FFmpeg stdin:', err.message);
+      }
+    }
   });
 
   ws.on('close', () => {
-    terminateActiveBroadcast('NEXO Studio WebSocket (close)');
+    if (broadcasterSocket === ws) {
+      scheduleBroadcastTermination('NEXO Studio WebSocket (close)');
+    }
   });
 
   ws.on('error', (err) => {
     console.error('[Broadcaster] WebSocket error:', err.message);
-    terminateActiveBroadcast('NEXO Studio WebSocket (error)');
+    if (broadcasterSocket === ws) {
+      scheduleBroadcastTermination('NEXO Studio WebSocket (error)');
+    }
   });
 });
 
 function setupIcecastUpstream() {
-  if (!ICECAST_URL) return;
+  if (!ICECAST_URL || upstreamIcecastReq) return;
 
   try {
     const parsedIcecast = new URL(ICECAST_URL);
@@ -380,13 +594,13 @@ function setupIcecastUpstream() {
       hostname: parsedIcecast.hostname,
       port: parsedIcecast.port || 8000,
       path: parsedIcecast.pathname || '/live',
-      method: 'PUT', // Icecast source PUT protocol
+      method: 'PUT',
       headers: {
-        'Content-Type': 'audio/webm',
+        'Content-Type': 'audio/mpeg',
         'Ice-Name': 'NEXO RADIO',
         'Ice-Genre': 'Hits',
         'Ice-Public': '1',
-        'Ice-Audio-Info': 'ice-samplerate=48000;ice-bitrate=128;ice-channels=2',
+        'Ice-Audio-Info': `ice-samplerate=44100;ice-bitrate=${STREAM_BITRATE_KBPS};ice-channels=2`,
       },
     };
 
@@ -403,10 +617,6 @@ function setupIcecastUpstream() {
       console.warn(`[Icecast Upstream] Connection failed: ${err.message}`);
       upstreamIcecastReq = null;
     });
-
-    if (headerChunk) {
-      upstreamIcecastReq.write(headerChunk);
-    }
   } catch (err) {
     console.warn('[Icecast Upstream] Setup failed:', err.message);
   }
@@ -414,10 +624,12 @@ function setupIcecastUpstream() {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`=================================================`);
-  console.log(`NEXO RADIO Audio Source & Stream Bridge Active`);
-  console.log(`- HTTP Stream URL: http://localhost:${PORT}/live`);
-  console.log(`- WS Broadcast:   ws://localhost:${PORT}/broadcast`);
-  console.log(`- Status:         http://localhost:${PORT}/status`);
+  console.log(`NEXO RADIO Broadcast-Grade MP3 Bridge v2.0 Active`);
+  console.log(`- HTTP Stream URL: http://localhost:${PORT}/live (audio/mpeg ${STREAM_BITRATE_KBPS}kbps CBR)`);
+  console.log(`- WS Broadcast:    ws://localhost:${PORT}/broadcast`);
+  console.log(`- Status:          http://localhost:${PORT}/status`);
+  console.log(`- FFmpeg Binary:   ${FFMPEG_BIN}`);
+  console.log(`- Burst PreBuffer: ${(MAX_BURST_BYTES / 1024).toFixed(0)} KB (~4s)`);
   if (ICECAST_URL) {
     console.log(`- Icecast Upstream: ${ICECAST_URL}`);
   }

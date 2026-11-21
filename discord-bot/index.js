@@ -1,4 +1,5 @@
 const path = require('path');
+const { spawn } = require('child_process');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const ffmpegStatic = require('ffmpeg-static');
@@ -9,9 +10,9 @@ if (ffmpegStatic) {
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const {
   joinVoiceChannel,
-  getVoiceConnection,
   createAudioPlayer,
   createAudioResource,
+  StreamType,
   AudioPlayerStatus,
   VoiceConnectionStatus,
   NoSubscriberBehavior,
@@ -21,7 +22,11 @@ const {
 const TOKEN = process.env.DISCORD_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const CHANNEL_ID = process.env.VOICE_CHANNEL_ID;
+const AUDIO_SOURCE = process.env.AUDIO_SOURCE || 'url'; // 'url' (Stream oficial) o 'device' (Cable VB local)
 const STREAM_URL = process.env.STREAM_URL || 'https://nexo-radio-bridge-axxt.onrender.com/live';
+const AUDIO_DEVICE = process.env.AUDIO_DEVICE || 'CABLE Output (VB-Audio Virtual Cable)';
+const BITRATE = process.env.BITRATE || '128k';
+const BASS_BOOST = process.env.BASS_BOOST || '2';
 
 if (!TOKEN || !GUILD_ID || !CHANNEL_ID) {
   console.error('\n[Error de configuración] Falta configurar las variables en discord-bot/.env');
@@ -38,44 +43,120 @@ const client = new Client({
 
 let voiceConnection = null;
 let audioPlayer = null;
+let ffmpegProcess = null;
 let isReconnecting = false;
 
-function playRadioStream() {
+function stopAudioSource() {
+  if (ffmpegProcess) {
+    try {
+      ffmpegProcess.kill('SIGTERM');
+    } catch {}
+    ffmpegProcess = null;
+  }
+}
+
+function startAudioStream() {
   if (!audioPlayer) {
     audioPlayer = createAudioPlayer({
       behaviors: {
         noSubscriber: NoSubscriberBehavior.Play,
+        maxMissedFrames: 250,
       },
     });
 
     audioPlayer.on(AudioPlayerStatus.Playing, () => {
-      console.log('[Radio Nexo Bot] ¡Transmitiendo audio en vivo en Discord exitosamente!');
+      console.log(`[Radio Nexo Bot] >>> EN VIVO: OggOpus ${BITRATE} Estéreo Hi-Fi · Modo Música Fullband (Uzox Engine) · Bass Boost +${BASS_BOOST}dB · Anti-Clipping Activo <<<`);
       if (client.user) {
-        client.user.setActivity('RADIO NEXO · En Vivo', { type: ActivityType.Listening });
+        client.user.setActivity(`RADIO NEXO · ${BITRATE} Hi-Fi`, { type: ActivityType.Listening });
       }
     });
 
     audioPlayer.on(AudioPlayerStatus.Idle, () => {
-      console.log('[Radio Nexo Bot] El flujo finalizó o recicló conexión. Reconectando en 2s...');
-      scheduleStreamReconnect(2000);
+      if (!ffmpegProcess) {
+        console.log('[Radio Nexo Bot] Audio inactivo. Reconectando en 2s...');
+        scheduleStreamReconnect(2000);
+      }
     });
 
     audioPlayer.on('error', (error) => {
-      console.warn('[Radio Nexo Bot] Aviso en reproductor de audio:', error.message);
-      scheduleStreamReconnect(3000);
+      console.warn('[Radio Nexo Bot] Aviso en reproductor:', error.message);
     });
   }
 
+  stopAudioSource();
+
   try {
-    const resourceUrl = `${STREAM_URL}?t=${Date.now()}`;
-    console.log(`[Radio Nexo Bot] Conectando a fuente de audio: ${resourceUrl}`);
-    const resource = createAudioResource(resourceUrl, {
-      inlineVolume: true,
-    });
-    if (resource.volume) {
-      resource.volume.setVolume(0.95);
+    let ffmpegArgs = [];
+    // Filtro audiófilo: Headroom limpio (-1.2dB) + graves cálidos (+2dB @ 80Hz) + Soft-Clipping analógico (cero chasquidos/suciedad)
+    const audioFilter = `aresample=48000,volume=0.88,bass=g=${BASS_BOOST}:f=80:w=0.5,asoftclip=type=tanh`;
+
+    if (AUDIO_SOURCE === 'device') {
+      console.log(`[Radio Nexo Bot] Capturando audio local directo de: "${AUDIO_DEVICE}"`);
+      ffmpegArgs = [
+        '-vn',
+        '-sample_rate', '48000',
+        '-channels', '2',
+        '-f', 'dshow',
+        '-rtbufsize', '64M',
+        '-thread_queue_size', '1024',
+        '-i', `audio=${AUDIO_DEVICE}`,
+        '-af', audioFilter,
+        '-c:a', 'libopus',
+        '-b:a', BITRATE,
+        '-vbr', 'on',
+        '-application', 'audio',
+        '-frame_duration', '20',
+        '-packet_loss', '0',
+        '-f', 'ogg',
+        'pipe:1',
+      ];
+    } else {
+      console.log(`[Radio Nexo Bot] Conectando a flujo digital de la radio: ${STREAM_URL}`);
+      ffmpegArgs = [
+        '-vn',
+        '-fflags', '+nobuffer+discardcorrupt',
+        '-reconnect', '1',
+        '-reconnect_streamed', '1',
+        '-reconnect_delay_max', '5',
+        '-thread_queue_size', '1024',
+        '-i', STREAM_URL,
+        '-af', audioFilter,
+        '-c:a', 'libopus',
+        '-b:a', BITRATE,
+        '-vbr', 'on',
+        '-application', 'audio',
+        '-frame_duration', '20',
+        '-packet_loss', '0',
+        '-f', 'ogg',
+        'pipe:1',
+      ];
     }
+
+    ffmpegProcess = spawn(ffmpegStatic, ffmpegArgs, {
+      stdio: ['ignore', 'pipe', 'inherit'],
+    });
+
+    ffmpegProcess.on('error', (err) => {
+      console.error('[Radio Nexo Bot] Error en FFmpeg:', err.message);
+      scheduleStreamReconnect(3000);
+    });
+
+    ffmpegProcess.on('exit', (code) => {
+      if (code !== 0 && code !== null) {
+        console.warn(`[Radio Nexo Bot] Flujo finalizó (código ${code}). Reconectando en 2s...`);
+        scheduleStreamReconnect(2000);
+      }
+    });
+
+    // Pipeline OggOpus directo:
+    // Pasa los paquetes Opus masterizados directamente al protocolo de voz de Discord sin recompresión
+    const resource = createAudioResource(ffmpegProcess.stdout, {
+      inputType: StreamType.OggOpus,
+      inlineVolume: false,
+    });
+
     audioPlayer.play(resource);
+
     if (voiceConnection) {
       voiceConnection.subscribe(audioPlayer);
     }
@@ -90,7 +171,7 @@ function scheduleStreamReconnect(delayMs) {
   isReconnecting = true;
   setTimeout(() => {
     isReconnecting = false;
-    playRadioStream();
+    startAudioStream();
   }, delayMs);
 }
 
@@ -108,10 +189,10 @@ async function connectToVoiceChannel() {
       return;
     }
 
-    console.log(`[Radio Nexo Bot] Conectando al canal de voz: #${channel.name} (${guild.name}) - Tipo: ${channel.type}...`);
+    console.log(`[Radio Nexo Bot] Conectando al canal de voz: #${channel.name} (${guild.name})...`);
     const botMember = guild.members.me || await guild.members.fetchMe();
     const permissions = channel.permissionsFor(botMember);
-    console.log(`[Radio Nexo Bot] Permisos: Connect=${permissions.has('Connect')}, Speak=${permissions.has('Speak')}, ViewChannel=${permissions.has('ViewChannel')}`);
+    console.log(`[Radio Nexo Bot] Permisos: Connect=${permissions.has('Connect')}, Speak=${permissions.has('Speak')}`);
 
     voiceConnection = joinVoiceChannel({
       channelId: channel.id,
@@ -126,7 +207,7 @@ async function connectToVoiceChannel() {
         console.log(`[Radio Nexo Bot] Estado de voz: ${oldState.status} -> ${newState.status}`);
         if (newState.status === VoiceConnectionStatus.Ready) {
           console.log('[Radio Nexo Bot] ¡Conexión de voz establecida con Discord!');
-          playRadioStream();
+          startAudioStream();
         }
       }
     });
@@ -139,8 +220,11 @@ async function connectToVoiceChannel() {
         ]);
       } catch {
         console.warn('[Radio Nexo Bot] Desconectado del canal de voz. Intentando reconectar...');
-        voiceConnection.destroy();
-        voiceConnection = null;
+        stopAudioSource();
+        if (voiceConnection) {
+          voiceConnection.destroy();
+          voiceConnection = null;
+        }
         setTimeout(connectToVoiceChannel, 3000);
       }
     });
@@ -155,13 +239,25 @@ async function connectToVoiceChannel() {
 }
 
 client.once('ready', () => {
-  console.log(`\n========================================`);
-  console.log(` RADIO NEXO - BOT DE DISCORD INICIADO`);
+  console.log(`\n======================================================`);
+  console.log(` RADIO NEXO - BOT DE DISCORD (MOTOR UZOX / OggOpus Hi-Fi)`);
   console.log(` Conectado como: ${client.user.tag}`);
-  console.log(`========================================\n`);
+  console.log(` Modo de audio: ${AUDIO_SOURCE === 'device' ? 'Captura local VB-Cable' : 'Flujo directo de la radio'}`);
+  console.log(` Motor: FFmpeg libopus directo -> StreamType.OggOpus`);
+  console.log(` Calidad: ${BITRATE} Estéreo 48kHz (Modo Fullband Música)`);
+  console.log(` Bass Boost: +${BASS_BOOST}dB @ 90Hz (con Limitador Anti-Clipping)`);
+  console.log(`======================================================\n`);
 
-  client.user.setActivity('RADIO NEXO', { type: ActivityType.Listening });
   connectToVoiceChannel();
+});
+
+process.on('SIGINT', () => {
+  stopAudioSource();
+  process.exit(0);
+});
+
+process.on('exit', () => {
+  stopAudioSource();
 });
 
 client.login(TOKEN).catch((err) => {

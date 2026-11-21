@@ -1,13 +1,14 @@
 {
   "name": "nexo-radio-bridge",
-  "version": "1.0.0",
-  "description": "NEXO RADIO Audio Source & Streaming Bridge Server",
+  "version": "2.0.0",
+  "description": "NEXO RADIO Broadcast-Grade MP3 Audio Source & Streaming Bridge Server",
   "main": "index.js",
   "scripts": {
     "build": "echo ready",
     "start": "node index.js"
   },
   "dependencies": {
+    "ffmpeg-static": "^5.2.0",
     "ws": "^8.18.0"
   },
   "engines": {

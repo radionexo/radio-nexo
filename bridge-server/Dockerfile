@@ -1,5 +1,8 @@
 FROM node:18-alpine
 
+# Install native FFmpeg for ultra-low-latency MP3 CBR transcoding
+RUN apk add --no-cache ffmpeg
+
 WORKDIR /app
 
 COPY package*.json ./

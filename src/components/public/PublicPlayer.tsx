@@ -298,15 +298,15 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
 
       if (isLive) {
         // If broadcaster is actively on air, reconnect with fresh timestamp
-        const isDjActive = Boolean(current.is_mic_active || current.current_song_title === 'DJ EN VIVO');
-        if (isDjActive) {
+        const isBroadcastingNow = Boolean(current.is_live || current.is_mic_active || current.current_song_title === 'DJ EN VIVO');
+        if (isBroadcastingNow) {
           console.log('[Player Watchdog] Live stream connection recycled, auto-reconnecting...');
           setTimeout(() => {
             if (audioRef.current) {
               audioRef.current.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
               audioRef.current.play().catch(console.warn);
             }
-          }, 600);
+          }, 300);
           return;
         } else {
           // Broadcaster stopped / disconnected -> immediately switch to continuous library music
@@ -318,8 +318,8 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
         }
       }
 
-      // If DJ is on air, NEVER advance library music; stay on the live stream!
-      if (current.is_mic_active || current.current_song_title === 'DJ EN VIVO') {
+      // If station is on air, NEVER advance library music; stay on the live stream!
+      if (current.is_live || current.is_mic_active || current.current_song_title === 'DJ EN VIVO') {
         if (LIVE_STREAM_URL && audioRef.current) {
           audioRef.current.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
           audioRef.current.play().catch(console.warn);
@@ -358,16 +358,16 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       const current = radioStore.getStationState();
 
       if (isLiveStream) {
-        const isDjLive = Boolean(current.is_mic_active || current.current_song_title === 'DJ EN VIVO');
-        if (isDjLive) {
-          // Broadcaster is live on air with mic/DJ; re-trigger live stream instead of abruptly playing songs!
-          console.warn('[Player Watchdog] Live stream connection notice during live DJ session, reconnecting in 1s...');
+        const isBroadcastingNow = Boolean(current.is_live || current.is_mic_active || current.current_song_title === 'DJ EN VIVO');
+        if (isBroadcastingNow) {
+          // Broadcaster is live on air; re-trigger live stream instead of abruptly playing songs!
+          console.warn('[Player Watchdog] Live stream connection notice during live session, reconnecting in 500ms...');
           setTimeout(() => {
-            if (audioRef.current && (stationState.is_mic_active || stationState.current_song_title === 'DJ EN VIVO')) {
+            if (audioRef.current) {
               audioRef.current.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
               audioRef.current.play().catch(console.warn);
             }
-          }, 1000);
+          }, 500);
           return;
         }
 
@@ -410,9 +410,12 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     }
   }, [stationState.current_song_id, stationState.updated_at, isPlaying]);
 
-  // Active Playback Watchdog: Ensures audio keeps playing whenever isPlaying is active
+  // Active Playback Watchdog: Ensures audio keeps playing & auto-recovers from silent network stalls
   useEffect(() => {
     if (!isPlaying) return;
+
+    let lastObservedTime = -1;
+    let frozenChecks = 0;
 
     const interval = setInterval(() => {
       const audio = audioRef.current;
@@ -422,16 +425,36 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       const currentSrc = audio.src || '';
       const isLiveStream = checkIfLiveStream(currentSrc);
 
-      const isDjOnAir = Boolean(current.is_mic_active || current.current_song_title === 'DJ EN VIVO');
+      const isBroadcastingNow = Boolean(current.is_live || current.is_mic_active || current.current_song_title === 'DJ EN VIVO');
 
-      // 1. If DJ is on air, guarantee listener is connected to the live stream without destroying active playback
-      if (isDjOnAir) {
+      // 1. If station is on air, guarantee listener is connected to the live MP3 stream
+      if (isBroadcastingNow) {
         if (!isLiveStream) {
-          console.log('[Player Watchdog] DJ al aire detectado por watchdog, cambiando al stream en vivo...');
+          console.log('[Player Watchdog] Emisión en vivo detectada por watchdog, conectando al stream MP3...');
+          frozenChecks = 0;
+          lastObservedTime = -1;
           audio.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
           audio.play().catch(console.warn);
-        } else if (audio.paused && isPlaying && !isLoading) {
-          // If already on the live stream, simply call play() to unpause without tearing down the connection
+          return;
+        }
+
+        // Detect silent network freeze (currentTime stuck for >= 7.5s on mobile 4G/5G)
+        if (!audio.paused) {
+          if (Math.abs(audio.currentTime - lastObservedTime) < 0.05) {
+            frozenChecks++;
+            if (frozenChecks >= 3) {
+              console.warn('[Player Watchdog] Stream congelado por red (>7.5s), reconectando limpiamente...');
+              frozenChecks = 0;
+              lastObservedTime = -1;
+              audio.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
+              audio.play().catch(console.warn);
+              return;
+            }
+          } else {
+            frozenChecks = 0;
+            lastObservedTime = audio.currentTime;
+          }
+        } else if (isPlaying && !isLoading) {
           audio.play().catch(console.warn);
         }
         return;
@@ -472,29 +495,25 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [isPlaying]);
 
-  // Real-time synchronization when DJ goes on air or leaves the air:
-  // When is_mic_active turns TRUE -> ALWAYS immediately connect / reconnect with fresh timestamp
-  // When is_mic_active turns FALSE -> Seamlessly fall back to continuous library music
+  // Real-time synchronization when station goes on air or leaves the air:
   useEffect(() => {
     if (isPlaying && audioRef.current && LIVE_STREAM_URL) {
       const audio = audioRef.current;
-      if (stationState.is_mic_active) {
-        console.log('[Player] DJ entró al aire, reconectando al live stream automáticamente...');
+      const isLiveNow = Boolean(stationState.is_live || stationState.is_mic_active || stationState.current_song_title === 'DJ EN VIVO');
+      const currentSrc = audio.src || '';
+      const onLiveStream = checkIfLiveStream(currentSrc);
+
+      if (isLiveNow && !onLiveStream) {
+        console.log('[Player] Emisión en vivo iniciada desde el estudio, conectando al stream directo...');
         audio.src = `${LIVE_STREAM_URL}?t=${Date.now()}`;
         audio.play().catch((err) => {
-          console.warn('Could not switch to live stream on mic active:', err);
-          const syncTime = getLiveSongProgress(stationState);
-          const targetUrl = stationState.current_song_url || '/songs/summer.mp3';
-          playDirectTrack(targetUrl, syncTime).catch(console.warn);
+          console.warn('Could not switch to live stream on broadcast active:', err);
         });
-      } else if (!stationState.is_live) {
-        const currentSrc = audio.src || '';
-        if (checkIfLiveStream(currentSrc)) {
-          console.log('[Player] DJ salió del aire, pasando a música continua de biblioteca...');
-          const syncTime = getLiveSongProgress(stationState);
-          const targetUrl = stationState.current_song_url || '/songs/summer.mp3';
-          playDirectTrack(targetUrl, syncTime).catch(console.warn);
-        }
+      } else if (!isLiveNow && onLiveStream) {
+        console.log('[Player] Emisión en vivo finalizada, pasando a música de biblioteca...');
+        const syncTime = getLiveSongProgress(stationState);
+        const targetUrl = stationState.current_song_url || '/songs/summer.mp3';
+        playDirectTrack(targetUrl, syncTime).catch(console.warn);
       }
     }
   }, [stationState.is_mic_active, stationState.is_live, isPlaying]);

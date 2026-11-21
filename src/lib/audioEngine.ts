@@ -136,6 +136,18 @@ class AudioEngine {
       masterLimiter.connect(this.masterDestination);
       this.masterGainNode.connect(this.masterAnalyser);
 
+      // Inaudible continuous clock keepalive (-100dB) into masterDestination:
+      // Prevents Chrome/Edge MediaRecorder from stalling or dropping frames during song changes/silence
+      try {
+        const keepaliveOsc = this.ctx.createOscillator();
+        const keepaliveGain = this.ctx.createGain();
+        keepaliveOsc.frequency.setValueAtTime(20, this.ctx.currentTime);
+        keepaliveGain.gain.setValueAtTime(0.00001, this.ctx.currentTime);
+        keepaliveOsc.connect(keepaliveGain);
+        keepaliveGain.connect(this.masterDestination);
+        keepaliveOsc.start();
+      } catch {}
+
       // Master -> monitorGain -> speakers (for DJ monitoring in studio)
       this.masterGainNode.connect(this.monitorGainNode);
       this.monitorGainNode.connect(this.ctx.destination);
@@ -747,7 +759,7 @@ class AudioEngine {
         ? 'audio/ogg;codecs=opus'
         : '';
 
-      const options = mimeType ? { mimeType, audioBitsPerSecond: 128000 } : { audioBitsPerSecond: 128000 };
+      const options = mimeType ? { mimeType, audioBitsPerSecond: 192000 } : { audioBitsPerSecond: 192000 };
       this.mediaRecorder = new MediaRecorder(stream, options);
 
       // Connect to Source Bridge WebSocket
@@ -760,13 +772,13 @@ class AudioEngine {
         this.broadcastWs.binaryType = 'arraybuffer';
 
         this.broadcastWs.onopen = () => {
-          console.log('[Broadcast] Conectado exitosamente al servidor puente en', wsUrl);
+          console.log('[Broadcast] Conectado exitosamente al servidor puente MP3 en', wsUrl);
           while (initialChunkQueue.length > 0) {
             const chunk = initialChunkQueue.shift();
             if (chunk) this.broadcastWs?.send(chunk);
           }
 
-          // Keepalive heartbeat ping every 15s to keep proxy/cloud connection active
+          // Keepalive heartbeat ping every 10s to prevent cloud/Render proxy idle disconnects
           if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
           this.heartbeatInterval = setInterval(() => {
             if (this.broadcastWs && this.broadcastWs.readyState === WebSocket.OPEN) {
@@ -774,20 +786,20 @@ class AudioEngine {
                 this.broadcastWs.send(new Uint8Array([1, 2, 3, 4]));
               } catch {}
             }
-          }, 15000);
+          }, 10000);
         };
 
-        // Automatic self-healing: if WebSocket closes while on the air, restart pipeline automatically
+        // Automatic self-healing: fast 1s reconnect (inside bridge's 6.5s grace period -> 0 dropped listeners!)
         this.broadcastWs.onclose = () => {
           console.warn('[Broadcast Watchdog] Conexión WebSocket cerrada con el puente.');
           if (this.isBroadcasting) {
-            console.log('[Broadcast Watchdog] Reconexión automática en curso (sin necesidad de reiniciar manualmente)...');
+            console.log('[Broadcast Watchdog] Reconexión rápida en 1s (transparente para oyentes)...');
             if (this.broadcastReconnectTimeout) clearTimeout(this.broadcastReconnectTimeout);
             this.broadcastReconnectTimeout = setTimeout(() => {
               if (this.isBroadcasting) {
                 this.restartBroadcasterPipeline();
               }
-            }, 2000);
+            }, 1000);
           }
         };
 
@@ -802,8 +814,11 @@ class AudioEngine {
         if (e.data && e.data.size > 0) {
           const buffer = await e.data.arrayBuffer();
           if (this.broadcastWs && this.broadcastWs.readyState === WebSocket.OPEN) {
-            this.broadcastWs.send(buffer);
-          } else if (initialChunkQueue.length < 8) {
+            // Backpressure protection: avoid memory buildup if uplink temporarily stalls
+            if (this.broadcastWs.bufferedAmount < 512 * 1024) {
+              this.broadcastWs.send(buffer);
+            }
+          } else if (initialChunkQueue.length < 15) {
             initialChunkQueue.push(buffer);
           }
         }
@@ -816,8 +831,8 @@ class AudioEngine {
         }
       };
 
-      // Emit chunks every 500ms for stable WebM/Opus frame clusters and smooth delivery
-      this.mediaRecorder.start(500);
+      // Emit chunks every 200ms for smooth, low-jitter cadence into FFmpeg MP3 transcoder
+      this.mediaRecorder.start(200);
     } catch (err) {
       console.error('Failed to start media recorder / broadcast:', err);
       if (this.isBroadcasting) {
