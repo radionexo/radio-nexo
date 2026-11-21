@@ -3,16 +3,27 @@ const { WebSocketServer } = require('ws');
 const { spawn, execSync } = require('child_process');
 const url = require('url');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const PORT = process.env.PORT || process.env.BRIDGE_PORT || 8000;
 const ICECAST_URL = process.env.ICECAST_SOURCE_URL || process.env.ICECAST_URL;
 const STREAM_BITRATE_KBPS = parseInt(process.env.STREAM_BITRATE || '192', 10);
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
+const HLS_DIR = path.join(os.tmpdir(), 'nexo-radio-hls');
+const HLS_PLAYLIST_PATH = path.join(HLS_DIR, 'live.m3u8');
 
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
+
+function resetHlsDir() {
+  try {
+    fs.rmSync(HLS_DIR, { recursive: true, force: true });
+  } catch {}
+  fs.mkdirSync(HLS_DIR, { recursive: true });
+}
+resetHlsDir();
 
 // Resolve FFmpeg binary: prefer native system ffmpeg (Alpine/Docker), fallback to ffmpeg-static (Render Native Node)
 function resolveFfmpegPath() {
@@ -126,11 +137,17 @@ function stopFfmpegTranscoder() {
 }
 
 /**
- * Spawn a low-latency FFmpeg transcoder that converts incoming browser audio
- * (WebM/Opus, MP4/AAC, or Ogg/Opus) into a rock-solid constant-bitrate MP3 stream.
+ * Spawn a dual-output low-latency FFmpeg transcoder:
+ * 1) Universal MP3 192kbps CBR on stdout (Desktop, Android, Discord, VLC)
+ * 2) Native Apple HLS AAC 128kbps (.m3u8 + 2s .ts segments) for iPhone / iPad / Safari
  */
-function startFfmpegTranscoder(inputFormat) {
+function startFfmpegTranscoder(inputFormat, hlsOnly = false) {
   stopFfmpegTranscoder();
+  if (!fs.existsSync(HLS_DIR)) {
+    fs.mkdirSync(HLS_DIR, { recursive: true });
+  }
+
+  const segPattern = path.join(HLS_DIR, 'seg_%05d.ts');
 
   const args = [
     '-hide_banner',
@@ -145,31 +162,61 @@ function startFfmpegTranscoder(inputFormat) {
     args.push('-probesize', '32768', '-analyzeduration', '500000');
   }
 
-  args.push(
-    '-i', 'pipe:0',
-    '-vn',
-    // Smooths out browser MediaRecorder jitter & micro-gaps seamlessly
-    '-af', 'aresample=async=1:first_pts=0',
-    '-c:a', 'libmp3lame',
-    '-b:a', `${STREAM_BITRATE_KBPS}k`,
-    '-ar', '44100',
-    '-ac', '2',
-    '-reservoir', '0',
-    '-f', 'mp3',
-    'pipe:1'
-  );
+  args.push('-i', 'pipe:0', '-vn');
 
-  console.log(`[Transcoder] Iniciando FFmpeg (${FFMPEG_BIN}) -> MP3 ${STREAM_BITRATE_KBPS}kbps CBR (input: ${inputFormat || 'auto'})`);
+  if (hlsOnly) {
+    // Secondary HLS muxer when Virtual DJ already sends clean MP3
+    args.push(
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-ar', '44100',
+      '-ac', '2',
+      '-f', 'hls',
+      '-hls_time', '2',
+      '-hls_list_size', '5',
+      '-hls_flags', 'delete_segments+omit_endlist+temp_file',
+      '-hls_segment_filename', segPattern,
+      HLS_PLAYLIST_PATH
+    );
+  } else {
+    // Primary Dual Output: MP3 192k CBR + Native Apple HLS AAC 128k
+    args.push(
+      '-filter_complex', '[0:a]aresample=async=1:first_pts=0,asplit=2[a_mp3][a_hls]',
+      '-map', '[a_mp3]',
+      '-c:a', 'libmp3lame',
+      '-b:a', `${STREAM_BITRATE_KBPS}k`,
+      '-ar', '44100',
+      '-ac', '2',
+      '-reservoir', '0',
+      '-f', 'mp3',
+      'pipe:1',
+      '-map', '[a_hls]',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-ar', '44100',
+      '-ac', '2',
+      '-f', 'hls',
+      '-hls_time', '2',
+      '-hls_list_size', '5',
+      '-hls_flags', 'delete_segments+omit_endlist+temp_file',
+      '-hls_segment_filename', segPattern,
+      HLS_PLAYLIST_PATH
+    );
+  }
+
+  console.log(`[Transcoder] Iniciando FFmpeg (${hlsOnly ? 'HLS-only' : `MP3 ${STREAM_BITRATE_KBPS}k + Apple HLS AAC 128k`}, input: ${inputFormat || 'auto'})`);
 
   const proc = spawn(FFMPEG_BIN, args, {
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: ['pipe', hlsOnly ? 'ignore' : 'pipe', 'pipe'],
   });
 
   ffmpegProc = proc;
 
-  proc.stdout.on('data', (mp3Chunk) => {
-    broadcastMp3Chunk(mp3Chunk);
-  });
+  if (!hlsOnly && proc.stdout) {
+    proc.stdout.on('data', (mp3Chunk) => {
+      broadcastMp3Chunk(mp3Chunk);
+    });
+  }
 
   proc.stderr.on('data', (errData) => {
     const msg = errData.toString().trim();
@@ -239,6 +286,7 @@ function scheduleBroadcastTermination(sourceName) {
     activeSourceType = null;
     burstChunks.length = 0;
     burstTotalBytes = 0;
+    resetHlsDir();
 
     for (const client of listeners) {
       try { client.end(); } catch {}
@@ -260,7 +308,7 @@ const server = http.createServer((req, res) => {
 
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
 
   if (req.method === 'OPTIONS') {
@@ -390,9 +438,12 @@ const server = http.createServer((req, res) => {
     activeSourceType = 'icecast-source';
     stopFfmpegTranscoder();
 
-    if (!isAlreadyMp3) {
-      // Transcode non-MP3 external source (e.g. Ogg/AAC) into universal MP3 CBR
-      startFfmpegTranscoder(null);
+    if (isAlreadyMp3) {
+      // Pass MP3 directly to MP3 listeners AND feed lightweight HLS-only muxer for iOS Safari
+      startFfmpegTranscoder('mp3', true);
+    } else {
+      // Transcode non-MP3 external source (e.g. Ogg/AAC) into both MP3 CBR & Apple HLS
+      startFfmpegTranscoder(null, false);
     }
 
     res.writeHead(200, {
@@ -406,7 +457,8 @@ const server = http.createServer((req, res) => {
     req.on('data', (chunk) => {
       if (isAlreadyMp3) {
         broadcastMp3Chunk(chunk);
-      } else if (ffmpegProc && ffmpegProc.stdin && !ffmpegProc.stdin.destroyed) {
+      }
+      if (ffmpegProc && ffmpegProc.stdin && !ffmpegProc.stdin.destroyed) {
         try { ffmpegProc.stdin.write(chunk); } catch {}
       }
     });
@@ -432,12 +484,14 @@ const server = http.createServer((req, res) => {
     res.end(
       JSON.stringify({
         status: 'online',
-        version: '2.0.0-mp3-cbr',
+        version: '2.1.0-mp3-hls-ios',
         isBroadcasting,
         sourceType: activeSourceType,
         listenersCount: listeners.size,
         port: PORT,
         format: 'audio/mpeg',
+        hlsReady: fs.existsSync(HLS_PLAYLIST_PATH),
+        hlsUrl: '/hls/live.m3u8',
         bitrate: STREAM_BITRATE_KBPS,
         burstBytes: burstTotalBytes,
         ffmpegReady: Boolean(FFMPEG_BIN),
@@ -448,6 +502,45 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 4.5 Native Apple HLS Stream for iPhone / iPad / Safari (/hls/live.m3u8 & /hls/seg_*.ts)
+  if ((req.method === 'GET' || req.method === 'HEAD') && parsed.pathname.startsWith('/hls/')) {
+    const fileName = path.basename(parsed.pathname);
+    if (!/^[a-zA-Z0-9._-]+$/.test(fileName)) {
+      res.writeHead(400);
+      res.end('Bad request');
+      return;
+    }
+
+    const filePath = path.join(HLS_DIR, fileName);
+    if (!fs.existsSync(filePath)) {
+      res.writeHead(404, {
+        'Content-Type': 'text/plain',
+        'Cache-Control': 'no-cache, no-store',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end('HLS stream initializing');
+      return;
+    }
+
+    const isPlaylist = fileName.endsWith('.m3u8');
+    const stat = fs.statSync(filePath);
+    res.writeHead(200, {
+      'Content-Type': isPlaylist ? 'application/vnd.apple.mpegurl' : 'video/mp2t',
+      'Content-Length': stat.size,
+      'Cache-Control': isPlaylist ? 'no-cache, no-store, must-revalidate' : 'public, max-age=15',
+      'Access-Control-Allow-Origin': '*',
+      'X-Accel-Buffering': 'no',
+    });
+
+    if (req.method === 'HEAD') {
+      res.end();
+      return;
+    }
+
+    fs.createReadStream(filePath).pipe(res);
+    return;
+  }
+
   // 5. Universal Live MP3 Audio Stream (/live, /live.mp3, /stream, /stream.mp3)
   if (
     parsed.pathname === '/live' ||
@@ -455,6 +548,16 @@ const server = http.createServer((req, res) => {
     parsed.pathname === '/stream' ||
     parsed.pathname === '/stream.mp3'
   ) {
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Content-Type': 'audio/mpeg',
+        'Cache-Control': 'no-cache, no-store',
+        'Access-Control-Allow-Origin': '*',
+        'icy-br': String(STREAM_BITRATE_KBPS),
+      });
+      res.end();
+      return;
+    }
     if (req.socket) {
       try { req.socket.setNoDelay(true); } catch {}
       try { req.socket.setKeepAlive(true, 10000); } catch {}
