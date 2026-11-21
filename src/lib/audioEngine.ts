@@ -39,7 +39,7 @@ class AudioEngine {
   private isMicOnAir = false;
   private needsUserInteraction = false;
   private musicVolume = 0.85;
-  private micVolume = 1.3; // Default 130% boost for clear radio presence
+  private micVolume = 1.0; // Default 100% (0dB unity gain) for clean, zero-saturation broadcast
   private masterVolume = 1.0;
   private duckedMusicRatio = 0.15; // 15% ducking when speaking
 
@@ -60,7 +60,9 @@ class AudioEngine {
       const savedMicVol = localStorage.getItem('nexo_mic_volume');
       if (savedMicVol) {
         const parsed = parseFloat(savedMicVol);
-        if (!isNaN(parsed) && parsed >= 0) this.micVolume = parsed;
+        if (!isNaN(parsed) && parsed >= 0) {
+          this.micVolume = parsed > 1.5 ? 1.0 : parsed;
+        }
       }
       const savedMusicVol = localStorage.getItem('nexo_music_volume');
       if (savedMusicVol) {
@@ -116,14 +118,14 @@ class AudioEngine {
       this.micAnalyser.fftSize = 64;
       this.masterAnalyser.fftSize = 64;
 
-      // Master broadcast destination with dynamic broadcast peak limiter (anti-distortion)
+      // Master broadcast destination with transparent peak limiter (-1.5dB ceiling, zero clipping)
       this.masterDestination = this.ctx.createMediaStreamDestination();
       const masterLimiter = this.ctx.createDynamicsCompressor();
-      masterLimiter.threshold.setValueAtTime(-1.0, this.ctx.currentTime);
-      masterLimiter.knee.setValueAtTime(3.0, this.ctx.currentTime);
-      masterLimiter.ratio.setValueAtTime(20.0, this.ctx.currentTime);
-      masterLimiter.attack.setValueAtTime(0.003, this.ctx.currentTime);
-      masterLimiter.release.setValueAtTime(0.1, this.ctx.currentTime);
+      masterLimiter.threshold.setValueAtTime(-1.5, this.ctx.currentTime);
+      masterLimiter.knee.setValueAtTime(6.0, this.ctx.currentTime);
+      masterLimiter.ratio.setValueAtTime(12.0, this.ctx.currentTime);
+      masterLimiter.attack.setValueAtTime(0.005, this.ctx.currentTime);
+      masterLimiter.release.setValueAtTime(0.15, this.ctx.currentTime);
 
       // Routing:
       // Music -> musicGain -> masterGain (and musicAnalyser in parallel)
@@ -211,9 +213,9 @@ class AudioEngine {
     const loop = () => {
       if (this.onLevelCallbacks.size > 0) {
         const levels: AudioLevels = {
-          music: this.isPlaying ? calcLevel(this.musicAnalyser, musicBuf, 1.4) : 0,
-          mic: this.isMicOnAir ? calcLevel(this.micAnalyser, micBuf, 2.2) : 0,
-          master: calcLevel(this.masterAnalyser, masterBuf, 1.4),
+          music: this.isPlaying ? calcLevel(this.musicAnalyser, musicBuf, 1.2) : 0,
+          mic: this.isMicOnAir ? calcLevel(this.micAnalyser, micBuf, 1.15) : 0,
+          master: calcLevel(this.masterAnalyser, masterBuf, 1.15),
         };
         this.onLevelCallbacks.forEach((cb) => cb(levels));
       }
@@ -416,50 +418,51 @@ class AudioEngine {
     try { this.micSourceNode.disconnect(); } catch {}
 
     if (this.broadcastEnhance) {
-      // 1. Highpass Filter at 75Hz (Q: 0.707) - removes low-end desk rumbles and table thumps
+      // Gentle mastering-grade broadcast polish (safe for full music + voice mixes, zero saturation)
+      // 1. Sub-bass cleanup at 35Hz (preserves full musical bass while removing DC/sub rumble)
       this.micHighpassNode = this.ctx.createBiquadFilter();
       this.micHighpassNode.type = 'highpass';
-      this.micHighpassNode.frequency.setValueAtTime(75, this.ctx.currentTime);
+      this.micHighpassNode.frequency.setValueAtTime(35, this.ctx.currentTime);
       this.micHighpassNode.Q.setValueAtTime(0.707, this.ctx.currentTime);
 
-      // 2. Vocal Warmth / Body at 220Hz (+2.2dB) - rich radio announcer chest resonance
+      // 2. Subtle Warmth at 180Hz (+0.8dB)
       this.micWarmthNode = this.ctx.createBiquadFilter();
       this.micWarmthNode.type = 'peaking';
-      this.micWarmthNode.frequency.setValueAtTime(220, this.ctx.currentTime);
-      this.micWarmthNode.Q.setValueAtTime(1.0, this.ctx.currentTime);
-      this.micWarmthNode.gain.setValueAtTime(2.2, this.ctx.currentTime);
+      this.micWarmthNode.frequency.setValueAtTime(180, this.ctx.currentTime);
+      this.micWarmthNode.Q.setValueAtTime(0.9, this.ctx.currentTime);
+      this.micWarmthNode.gain.setValueAtTime(0.8, this.ctx.currentTime);
 
-      // 3. Boxiness / Mud Cut at 650Hz (-1.8dB) - clears out hollow cardboard room sound
+      // 3. Mild Mud Cleanup at 450Hz (-0.8dB)
       this.micMudCutNode = this.ctx.createBiquadFilter();
       this.micMudCutNode.type = 'peaking';
-      this.micMudCutNode.frequency.setValueAtTime(650, this.ctx.currentTime);
-      this.micMudCutNode.Q.setValueAtTime(1.3, this.ctx.currentTime);
-      this.micMudCutNode.gain.setValueAtTime(-1.8, this.ctx.currentTime);
+      this.micMudCutNode.frequency.setValueAtTime(450, this.ctx.currentTime);
+      this.micMudCutNode.Q.setValueAtTime(1.1, this.ctx.currentTime);
+      this.micMudCutNode.gain.setValueAtTime(-0.8, this.ctx.currentTime);
 
-      // 4. Clarity & Vocal Articulation at 3.8kHz (+2.6dB) - lets words cut through music cleanly
+      // 4. Clean Clarity at 3.5kHz (+1.0dB)
       this.micPresenceNode = this.ctx.createBiquadFilter();
       this.micPresenceNode.type = 'peaking';
-      this.micPresenceNode.frequency.setValueAtTime(3800, this.ctx.currentTime);
-      this.micPresenceNode.Q.setValueAtTime(1.1, this.ctx.currentTime);
-      this.micPresenceNode.gain.setValueAtTime(2.6, this.ctx.currentTime);
+      this.micPresenceNode.frequency.setValueAtTime(3500, this.ctx.currentTime);
+      this.micPresenceNode.Q.setValueAtTime(1.0, this.ctx.currentTime);
+      this.micPresenceNode.gain.setValueAtTime(1.0, this.ctx.currentTime);
 
-      // 5. Air & Sheen at 10kHz (+1.6dB) - silky condenser high-end
+      // 5. Gentle Air at 10kHz (+0.8dB)
       this.micAirNode = this.ctx.createBiquadFilter();
       this.micAirNode.type = 'highshelf';
       this.micAirNode.frequency.setValueAtTime(10000, this.ctx.currentTime);
-      this.micAirNode.gain.setValueAtTime(1.6, this.ctx.currentTime);
+      this.micAirNode.gain.setValueAtTime(0.8, this.ctx.currentTime);
 
-      // 6. Preamp Boost (+3dB ~ 1.4x clean gain)
+      // 6. Clean Headroom Trim (-0.7dB = 0.92x) so EQ never clips mastered music
       this.micPreampNode = this.ctx.createGain();
-      this.micPreampNode.gain.setValueAtTime(1.4, this.ctx.currentTime);
+      this.micPreampNode.gain.setValueAtTime(0.92, this.ctx.currentTime);
 
-      // 7. Radio Voice Compressor (smooth, warm, transparent, prevents peak distortion without pumping)
+      // 7. Smooth Broadcast Bus Compressor (transparent leveling, no pumping)
       this.micCompressorNode = this.ctx.createDynamicsCompressor();
-      this.micCompressorNode.threshold.setValueAtTime(-16, this.ctx.currentTime);
-      this.micCompressorNode.knee.setValueAtTime(12, this.ctx.currentTime);
-      this.micCompressorNode.ratio.setValueAtTime(3.0, this.ctx.currentTime);
-      this.micCompressorNode.attack.setValueAtTime(0.008, this.ctx.currentTime);
-      this.micCompressorNode.release.setValueAtTime(0.18, this.ctx.currentTime);
+      this.micCompressorNode.threshold.setValueAtTime(-10, this.ctx.currentTime);
+      this.micCompressorNode.knee.setValueAtTime(14, this.ctx.currentTime);
+      this.micCompressorNode.ratio.setValueAtTime(2.0, this.ctx.currentTime);
+      this.micCompressorNode.attack.setValueAtTime(0.015, this.ctx.currentTime);
+      this.micCompressorNode.release.setValueAtTime(0.2, this.ctx.currentTime);
 
       // Connect: source -> highpass -> warmth -> mudCut -> presence -> air -> preamp -> compressor -> micGainNode
       this.micSourceNode.connect(this.micHighpassNode);
@@ -471,9 +474,9 @@ class AudioEngine {
       this.micPreampNode.connect(this.micCompressorNode);
       this.micCompressorNode.connect(this.micGainNode);
     } else {
-      // Pure Raw Audio bypass: source -> preamp -> micGainNode
+      // Pure Unity-Gain Direct Bypass (0dB = 1.0x, zero coloration — ideal for Virtual DJ / External Mixer)
       this.micPreampNode = this.ctx.createGain();
-      this.micPreampNode.gain.setValueAtTime(1.2, this.ctx.currentTime);
+      this.micPreampNode.gain.setValueAtTime(1.0, this.ctx.currentTime);
       this.micSourceNode.connect(this.micPreampNode);
       this.micPreampNode.connect(this.micGainNode);
     }

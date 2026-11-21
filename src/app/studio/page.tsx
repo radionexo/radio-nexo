@@ -356,11 +356,21 @@ export default function StudioDashboardPage() {
                   <Mic className="w-4 h-4 text-[#e5b45f]" />
                   Micrófono / Consola {engineState.isMicOnAir ? '(Al Aire)' : '(Muteado)'}
                 </span>
-                <div className="flex items-center gap-1.5 font-mono text-xs">
-                  {engineState.micVolume > 1 && (
+                <div className="flex items-center gap-2 font-mono text-xs">
+                  {engineState.micVolume > 1.05 && (
                     <span className="text-[10px] text-amber-400 font-bold bg-amber-400/10 px-1.5 py-0.5 rounded">
-                      +{Math.round((engineState.micVolume - 1) * 100)}% Boost
+                      {engineState.micVolume > 1.2 ? '⚠ Alto (puede saturar)' : `+${Math.round((engineState.micVolume - 1) * 100)}% Boost`}
                     </span>
+                  )}
+                  {Math.abs(engineState.micVolume - 1.0) > 0.02 && (
+                    <button
+                      type="button"
+                      onClick={() => audioEngine.setMicVolume(1.0)}
+                      className="text-[10px] text-[#e5b45f] hover:underline font-sans font-semibold cursor-pointer"
+                      title="Restablecer a 100% (0 dB sin saturación)"
+                    >
+                      0 dB (100%)
+                    </button>
                   )}
                   <span className="text-white font-bold">{Math.round(engineState.micVolume * 100)}%</span>
                 </div>
@@ -369,12 +379,12 @@ export default function StudioDashboardPage() {
               <input
                 type="range"
                 min="0"
-                max="2.5"
+                max="1.5"
                 step="0.05"
-                value={engineState.micVolume}
+                value={Math.min(1.5, engineState.micVolume)}
                 onChange={(e) => audioEngine.setMicVolume(parseFloat(e.target.value))}
                 className="w-full h-1.5 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-[#e5b45f]"
-                title="Ajustar ganancia del micrófono (hasta 250%)"
+                title="Ajustar ganancia de entrada (recomendado: 80% - 100% para señal limpia)"
               />
             </div>
 
