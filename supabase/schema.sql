@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS public.station_state (
 
 -- Seed initial station state row
 INSERT INTO public.station_state (id, is_live, current_song_title, current_song_artist, current_song_cover, current_song_url, listeners_count)
-VALUES ('current', true, 'Summer Vibes', 'Calvin Harris ft. NEXO', '/cover_default.webp', '/songs/summer.mp3', 1)
+VALUES ('current', false, 'DJ EN VIVO', 'Sesión en Directo · Radio Nexo', '/cover_default.webp', '', 1)
 ON CONFLICT (id) DO UPDATE SET
     current_song_title = EXCLUDED.current_song_title,
     current_song_artist = EXCLUDED.current_song_artist,
@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS public.chat_messages (
 ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Public read chat_messages" ON public.chat_messages FOR SELECT USING (true);
 CREATE POLICY "Public insert chat_messages" ON public.chat_messages FOR INSERT WITH CHECK (true);
+CREATE POLICY "Public delete chat_messages" ON public.chat_messages FOR DELETE USING (true);
 ALTER PUBLICATION supabase_realtime ADD TABLE public.chat_messages;
 
 -- ==============================================================================
