@@ -67,7 +67,7 @@ export async function POST(request: Request) {
     if (error) {
       console.error('[Push Subscribe] Supabase error:', error.message);
       return NextResponse.json(
-        { error: 'No se pudo guardar la suscripción.' },
+        { error: `Supabase: ${error.message}` },
         { status: 500 }
       );
     }

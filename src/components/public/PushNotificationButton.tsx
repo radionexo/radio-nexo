@@ -21,7 +21,7 @@ export default function PushNotificationButton() {
   const [isBusy, setIsBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || '';
+  const vapidPublicKey = (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || '').trim();
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -72,9 +72,8 @@ export default function PushNotificationButton() {
 
     setIsBusy(true);
     try {
-      const reg = await navigator.serviceWorker.ready;
-
       if (isSubscribed) {
+        const reg = await navigator.serviceWorker.ready;
         const existing = await reg.pushManager.getSubscription();
         if (existing) {
           await fetch('/api/push/subscribe', {
@@ -87,16 +86,34 @@ export default function PushNotificationButton() {
         setIsSubscribed(false);
         showToast('Avisos desactivados.');
       } else {
-        const permission = await Notification.requestPermission();
+        // CRITICAL for iOS Safari PWA: requestPermission MUST run FIRST in the tap gesture before any await!
+        const permission =
+          Notification.permission === 'granted'
+            ? 'granted'
+            : await Notification.requestPermission();
+
         if (permission !== 'granted') {
-          showToast('Permiso de notificaciones denegado en tu navegador.');
+          showToast(
+            'Permiso bloqueado. Actívalo en Ajustes → Notificaciones → Radio Nexo y vuelve a tocar la campana.'
+          );
           return;
         }
 
-        const sub = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
-        });
+        // Ensure Service Worker is registered and active
+        let reg = await navigator.serviceWorker.getRegistration('/');
+        if (!reg) {
+          reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        }
+        reg = await navigator.serviceWorker.ready;
+
+        // Reuse existing subscription or create a fresh one
+        let sub = await reg.pushManager.getSubscription();
+        if (!sub) {
+          sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+          });
+        }
 
         const res = await fetch('/api/push/subscribe', {
           method: 'POST',
@@ -108,15 +125,21 @@ export default function PushNotificationButton() {
         });
 
         if (!res.ok) {
-          throw new Error('Error guardando suscripción');
+          let errMsg = 'Error guardando suscripción en servidor.';
+          try {
+            const errData = await res.json();
+            if (errData?.error) errMsg = errData.error;
+          } catch {}
+          throw new Error(errMsg);
         }
 
         setIsSubscribed(true);
         showToast('🔔 ¡Listo! Te avisaremos cuando Radio Nexo esté en vivo.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('[Push] Error:', err);
-      showToast('No se pudieron activar los avisos en este dispositivo.');
+      const detail = err?.message ? ` (${err.message})` : '';
+      showToast(`No se pudieron activar los avisos${detail}`);
     } finally {
       setIsBusy(false);
     }
