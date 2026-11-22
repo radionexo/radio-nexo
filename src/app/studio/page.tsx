@@ -20,6 +20,7 @@ import { audioEngine } from '@/lib/audioEngine';
 import { radioStore } from '@/lib/radioStore';
 import { reactionsBus, LiveReactionEvent } from '@/lib/reactionsBus';
 import { StudioChatHub } from '@/components/studio/StudioChatHub';
+import { StudioPushPanel } from '@/components/studio/StudioPushPanel';
 import { MicrophoneSettingsModal } from '@/components/studio/MicrophoneSettingsModal';
 import { OnlineListenersModal } from '@/components/studio/OnlineListenersModal';
 import { DiscordSettingsModal } from '@/components/studio/DiscordSettingsModal';
@@ -650,6 +651,9 @@ export default function StudioDashboardPage() {
               </div>
             </div>
           </div>
+
+          {/* PWA Push Notifications Sender Panel */}
+          <StudioPushPanel currentShowTitle={stationState.current_song_title || 'DJ EN VIVO'} />
         </div>
 
         {/* RIGHT COLUMN: FULL-HEIGHT CHAT HUB & REQUESTS */}

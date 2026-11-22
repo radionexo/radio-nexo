@@ -1,5 +1,5 @@
 // NEXO RADIO - Progressive Web App Service Worker
-const CACHE_NAME = 'nexo-radio-pwa-v2';
+const CACHE_NAME = 'nexo-radio-pwa-v3';
 
 const STATIC_ASSETS = [
   '/',
@@ -84,6 +84,63 @@ self.addEventListener('fetch', (event) => {
         .catch(() => cached);
 
       return cached || fetchPromise;
+    })
+  );
+});
+
+// =========================================================
+// WEB PUSH NOTIFICATIONS (Android, Desktop & iOS 16.4+ PWA)
+// =========================================================
+self.addEventListener('push', (event) => {
+  let payload = {
+    title: '🔴 RADIO NEXO · En Vivo',
+    body: '¡Estamos transmitiendo en directo! Toca para sintonizar ahora.',
+    url: '/',
+    tag: 'nexo-live-push',
+  };
+
+  if (event.data) {
+    try {
+      const parsed = event.data.json();
+      payload = { ...payload, ...parsed };
+    } catch {
+      payload.body = event.data.text() || payload.body;
+    }
+  }
+
+  const options = {
+    body: payload.body,
+    icon: '/icon-192.png',
+    badge: '/isotipo_nexo.png',
+    tag: payload.tag || 'nexo-live-push',
+    renotify: true,
+    vibrate: [150, 75, 150],
+    data: {
+      url: payload.url || '/',
+    },
+  };
+
+  event.waitUntil(self.registration.showNotification(payload.title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = (event.notification.data && event.notification.data.url) || '/';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ('focus' in client) {
+          client.focus();
+          if ('navigate' in client && targetUrl && !client.url.endsWith(targetUrl)) {
+            return client.navigate(targetUrl);
+          }
+          return client;
+        }
+      }
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(targetUrl);
+      }
     })
   );
 });

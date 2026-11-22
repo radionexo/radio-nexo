@@ -18,6 +18,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import PublicPlayer from '@/components/public/PublicPlayer';
+import PushNotificationButton from '@/components/public/PushNotificationButton';
 import RequestModal from '@/components/public/RequestModal';
 import WelcomeNameModal from '@/components/public/WelcomeNameModal';
 import { LiveChatView, LiveChatDrawer } from '@/components/public/LiveChat';
@@ -110,6 +111,9 @@ export default function NexoRadioPublicPage() {
 
         {/* Right Top Header Actions */}
         <div className="flex items-center gap-2 sm:gap-3">
+          {/* PWA Push Notifications Opt-in Bell */}
+          <PushNotificationButton />
+
           {/* Listener counter pill */}
           <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs font-medium text-gray-300">
             <Users className="w-3.5 h-3.5 text-[#e5b45f]" />

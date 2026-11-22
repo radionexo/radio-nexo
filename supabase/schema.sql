@@ -153,3 +153,24 @@ CREATE POLICY "Public Upload Covers" ON storage.objects FOR INSERT WITH CHECK (b
 CREATE POLICY "Public Delete Covers" ON storage.objects FOR DELETE USING (bucket_id = 'covers');
 
 
+
+-- ==============================================================================
+-- 7. TABLA DE SUSCRIPCIONES PUSH (NOTIFICACIONES PWA)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.push_subscriptions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    endpoint TEXT UNIQUE NOT NULL,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    user_name VARCHAR(100) DEFAULT 'Oyente',
+    user_agent TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.push_subscriptions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Public manage push_subscriptions"
+ON public.push_subscriptions FOR ALL
+USING (true)
+WITH CHECK (true);
