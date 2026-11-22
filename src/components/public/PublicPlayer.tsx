@@ -114,12 +114,6 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     return () => unsubscribe();
   }, []);
 
-  // Stream URLs: MP3 192kbps CBR (Desktop/Android) & Native Apple HLS AAC (.m3u8 for iOS/Safari)
-  const LIVE_STREAM_URL = process.env.NEXT_PUBLIC_STREAM_URL || 'https://nexo-radio-bridge-axxt.onrender.com/live';
-  const HLS_STREAM_URL =
-    process.env.NEXT_PUBLIC_HLS_URL ||
-    LIVE_STREAM_URL.replace(/\/(live|stream)(\.mp3)?\/?$/, '/hls/live.m3u8');
-
   const isAppleHlsDevice = (audio?: HTMLAudioElement | null) => {
     if (typeof window === 'undefined') return false;
     const ua = navigator.userAgent || '';
@@ -134,11 +128,28 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     return isIOS || nativeHls;
   };
 
-  const getBestLiveStreamUrl = (audio?: HTMLAudioElement | null, forceMp3 = false) => {
-    if (!forceMp3 && isAppleHlsDevice(audio) && HLS_STREAM_URL) {
-      return `${HLS_STREAM_URL}?t=${Date.now()}`;
+  // Dynamically resolve active Bridge base URL from Supabase (auto-synced by Cloudflare Tunnel)
+  const getActiveBridgeBase = () => {
+    const raw = radioStore.getStationState()?.current_song_url || stationState.current_song_url || '';
+    if (raw.startsWith('https://') && !raw.endsWith('.mp3') && !raw.includes('/songs/')) {
+      return raw.replace(/\/+$/, '');
     }
-    return `${LIVE_STREAM_URL}?t=${Date.now()}`;
+    return '';
+  };
+
+  const getBestLiveStreamUrl = (audio?: HTMLAudioElement | null, forceMp3 = false) => {
+    const base = getActiveBridgeBase();
+    const mp3Url = base
+      ? `${base}/live`
+      : (process.env.NEXT_PUBLIC_STREAM_URL || 'https://nexo-radio-bridge-axxt.onrender.com/live');
+    const hlsUrl = base
+      ? `${base}/hls/live.m3u8`
+      : (process.env.NEXT_PUBLIC_HLS_URL || mp3Url.replace(/\/(live|stream)(\.mp3)?\/?$/, '/hls/live.m3u8'));
+
+    if (!forceMp3 && isAppleHlsDevice(audio) && hlsUrl) {
+      return `${hlsUrl}?t=${Date.now()}`;
+    }
+    return `${mp3Url}?t=${Date.now()}`;
   };
 
   // Initialize audio element with iOS-friendly attributes

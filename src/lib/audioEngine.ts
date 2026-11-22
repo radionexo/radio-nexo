@@ -765,9 +765,20 @@ class AudioEngine {
       const options = mimeType ? { mimeType, audioBitsPerSecond: 192000 } : { audioBitsPerSecond: 192000 };
       this.mediaRecorder = new MediaRecorder(stream, options);
 
-      // Connect to Source Bridge WebSocket
+      // Dynamically resolve active Bridge WebSocket URL:
+      // 1. Live tunnel URL synced in Supabase station_state.current_song_url (Cloudflare Tunnel / custom bridge)
+      // 2. NEXT_PUBLIC_BRIDGE_WS_URL env var
+      // 3. Default fallback
+      const stateUrl = radioStore.getStationState()?.current_song_url || '';
+      const isDynamicBridge =
+        stateUrl.startsWith('https://') &&
+        !stateUrl.endsWith('.mp3') &&
+        !stateUrl.includes('/songs/');
+      const dynamicWsUrl = isDynamicBridge
+        ? `${stateUrl.replace(/^https:\/\//i, 'wss://').replace(/\/+$/, '')}/broadcast`
+        : '';
       const defaultWsUrl = 'wss://nexo-radio-bridge-axxt.onrender.com/broadcast';
-      const wsUrl = process.env.NEXT_PUBLIC_BRIDGE_WS_URL || defaultWsUrl;
+      const wsUrl = dynamicWsUrl || process.env.NEXT_PUBLIC_BRIDGE_WS_URL || defaultWsUrl;
       const initialChunkQueue: ArrayBuffer[] = [];
 
       try {
