@@ -18,6 +18,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
   const [isLoading, setIsLoading] = useState(false);
   const [volume, setVolume] = useState(0.85);
   const [isMuted, setIsMuted] = useState(false);
+  const [isIOSDevice, setIsIOSDevice] = useState(false);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -26,6 +27,17 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
+
+  // Detect iOS / iPadOS (Apple locks HTMLAudioElement.volume as read-only; only .muted works natively)
+  useEffect(() => {
+    if (typeof navigator !== 'undefined') {
+      const ua = navigator.userAgent || '';
+      const ios =
+        /iPad|iPhone|iPod/.test(ua) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      setIsIOSDevice(ios);
+    }
+  }, []);
 
   // Restore saved volume and muted state from localStorage
   useEffect(() => {
@@ -54,15 +66,18 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     setVolume(clamped);
     if (audioRef.current) {
       audioRef.current.volume = isMuted ? 0 : clamped;
+      audioRef.current.muted = isMuted || clamped === 0;
     }
     if (clamped > 0 && isMuted) {
       setIsMuted(false);
+      if (audioRef.current) audioRef.current.muted = false;
       try {
         localStorage.setItem(MUTED_STORAGE_KEY, 'false');
       } catch {}
     }
     if (clamped === 0 && !isMuted) {
       setIsMuted(true);
+      if (audioRef.current) audioRef.current.muted = true;
       try {
         localStorage.setItem(MUTED_STORAGE_KEY, 'true');
       } catch {}
@@ -78,6 +93,8 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     setIsMuted((prev) => {
       const next = !prev;
       if (audioRef.current) {
+        // Setting .muted works natively on iOS Safari (unlike .volume which Apple locks)
+        audioRef.current.muted = next;
         audioRef.current.volume = next ? 0 : volume;
       }
       try {
@@ -182,9 +199,10 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     };
   }, []);
 
-  // Update volume
+  // Update volume & muted state (using .muted guarantees iOS Safari compatibility)
   useEffect(() => {
     if (audioRef.current) {
+      audioRef.current.muted = isMuted || volume === 0;
       audioRef.current.volume = isMuted ? 0 : volume;
     }
   }, [volume, isMuted]);
@@ -410,12 +428,12 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
           )}
         </button>
 
-        {/* Volume Control Pill (Mute toggle + Slider + Percentage) */}
+        {/* Volume Control Pill: Full slider on Desktop/Android, native Mute pill on iOS (Apple locks HTMLAudioElement.volume) */}
         <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-full bg-black/40 border border-white/10 backdrop-blur-md transition-all shadow-md">
           <button
             type="button"
             onClick={handleToggleMute}
-            className={`p-1.5 rounded-full transition-all duration-200 active:scale-90 cursor-pointer ${
+            className={`flex items-center gap-1.5 p-1.5 rounded-full transition-all duration-200 active:scale-90 cursor-pointer ${
               isMuted || volume === 0
                 ? 'text-rose-400 bg-rose-500/10'
                 : 'text-gray-300 hover:text-white hover:bg-white/10'
@@ -425,28 +443,37 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
           >
             {isMuted || volume === 0 ? (
               <VolumeX className="w-4 h-4 sm:w-5 sm:h-5 text-rose-400" />
-            ) : volume < 0.5 ? (
+            ) : volume < 0.5 && !isIOSDevice ? (
               <Volume1 className="w-4 h-4 sm:w-5 sm:h-5 text-[#e5b45f]" />
             ) : (
               <Volume2 className="w-4 h-4 sm:w-5 sm:h-5 text-[#e5b45f]" />
             )}
+            {isIOSDevice && (
+              <span className="text-[11px] font-semibold pr-1 select-none">
+                {isMuted ? 'Silenciado' : 'Sonido'}
+              </span>
+            )}
           </button>
 
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={isMuted ? 0 : volume}
-            onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-            className="w-16 sm:w-24 accent-[#e5b45f] h-1.5 bg-white/20 rounded-lg cursor-pointer transition-all hover:bg-white/30"
-            title={`Volumen: ${Math.round((isMuted ? 0 : volume) * 100)}%`}
-            aria-label="Control de volumen"
-          />
+          {!isIOSDevice && (
+            <>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={isMuted ? 0 : volume}
+                onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                className="w-16 sm:w-24 accent-[#e5b45f] h-1.5 bg-white/20 rounded-lg cursor-pointer transition-all hover:bg-white/30"
+                title={`Volumen: ${Math.round((isMuted ? 0 : volume) * 100)}%`}
+                aria-label="Control de volumen"
+              />
 
-          <span className="text-[10px] sm:text-[11px] font-mono text-gray-300 w-7 text-right select-none font-medium">
-            {Math.round((isMuted ? 0 : volume) * 100)}%
-          </span>
+              <span className="text-[10px] sm:text-[11px] font-mono text-gray-300 w-7 text-right select-none font-medium">
+                {Math.round((isMuted ? 0 : volume) * 100)}%
+              </span>
+            </>
+          )}
         </div>
       </div>
 
