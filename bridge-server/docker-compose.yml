@@ -1,0 +1,30 @@
+services:
+  bridge:
+    build: .
+    container_name: nexo-radio-bridge
+    restart: always
+    environment:
+      - PORT=8000
+      - STREAM_BITRATE=192
+      - BRIDGE_PASSWORD=${BRIDGE_PASSWORD:-nexoradio2026}
+    volumes:
+      - bridge_uploads:/app/uploads
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: nexo-radio-caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - bridge
+
+volumes:
+  bridge_uploads:
+  caddy_data:
+  caddy_config:
