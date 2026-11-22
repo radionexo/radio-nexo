@@ -551,10 +551,16 @@ class AudioEngine {
       }
 
       this.isMicOnAir = true;
+      const existingState = radioStore.getStationState();
+      const hasCustomTitle =
+        existingState.current_song_title &&
+        existingState.current_song_title !== 'Summer Vibes' &&
+        existingState.current_song_title !== 'NEXO Stream' &&
+        existingState.current_song_title !== 'Radio Nexo';
       radioStore.updateStationState({
         is_mic_active: true,
-        current_song_title: 'DJ EN VIVO',
-        current_song_artist: 'Sesión en Directo · Radio Nexo',
+        current_song_title: hasCustomTitle ? existingState.current_song_title : 'DJ EN VIVO',
+        current_song_artist: hasCustomTitle ? existingState.current_song_artist : 'Sesión en Directo · Radio Nexo',
       });
       this.persistSession();
       this.notify();
@@ -1083,6 +1089,130 @@ class AudioEngine {
       } catch (e) {
         console.warn('Error resuming audio from gesture:', e);
       }
+    }
+  }
+
+  // --- LIVE STUDIO SOUNDBOARD (INJECTED DIRECTLY INTO MASTER BROADCAST BUS) ---
+  public async playSoundEffect(effect: 'airhorn' | 'applause' | 'riser' | 'chime' | 'boom' | 'jingle') {
+    this.init();
+    if (!this.ctx || !this.masterGainNode) return;
+    if (this.ctx.state === 'suspended') {
+      try { await this.ctx.resume(); } catch {}
+    }
+
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const fxGain = ctx.createGain();
+    fxGain.gain.setValueAtTime(0.45, now);
+    fxGain.connect(this.masterGainNode);
+
+    if (effect === 'airhorn') {
+      // Classic DJ Triple-Tone Airhorn
+      const freqs = [392, 493.88, 587.33, 783.99];
+      freqs.forEach((f) => {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(f * 0.96, now);
+        osc.frequency.exponentialRampToValueAtTime(f, now + 0.05);
+        g.gain.setValueAtTime(0.001, now);
+        g.gain.linearRampToValueAtTime(0.22, now + 0.03);
+        g.gain.setValueAtTime(0.22, now + 0.55);
+        g.gain.exponentialRampToValueAtTime(0.001, now + 0.85);
+        osc.connect(g);
+        g.connect(fxGain);
+        osc.start(now);
+        osc.stop(now + 0.88);
+      });
+    } else if (effect === 'applause') {
+      // Filtered stereo-like crowd applause burst
+      const duration = 1.8;
+      const bufferSize = Math.floor(ctx.sampleRate * duration);
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        const env = Math.sin((i / bufferSize) * Math.PI);
+        const clapMod = 0.65 + 0.35 * Math.sin(i * 0.0045);
+        data[i] = (Math.random() * 2 - 1) * env * clapMod;
+      }
+      const noise = ctx.createBufferSource();
+      noise.buffer = buffer;
+      const bandpass = ctx.createBiquadFilter();
+      bandpass.type = 'bandpass';
+      bandpass.frequency.setValueAtTime(1600, now);
+      bandpass.Q.setValueAtTime(0.8, now);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.65, now);
+      noise.connect(bandpass);
+      bandpass.connect(g);
+      g.connect(fxGain);
+      noise.start(now);
+    } else if (effect === 'riser') {
+      // Smooth DJ synth sweep riser
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(180, now);
+      osc.frequency.exponentialRampToValueAtTime(1400, now + 1.15);
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(400, now);
+      filter.frequency.exponentialRampToValueAtTime(4500, now + 1.15);
+      g.gain.setValueAtTime(0.01, now);
+      g.gain.linearRampToValueAtTime(0.35, now + 1.05);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 1.25);
+      osc.connect(filter);
+      filter.connect(g);
+      g.connect(fxGain);
+      osc.start(now);
+      osc.stop(now + 1.3);
+    } else if (effect === 'chime') {
+      // Warm radio studio bell / greeting chime
+      [880, 1318.51, 1760].forEach((f, idx) => {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = 'sine';
+        const t = now + idx * 0.08;
+        osc.frequency.setValueAtTime(f, t);
+        g.gain.setValueAtTime(0.001, t);
+        g.gain.linearRampToValueAtTime(0.28, t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.75);
+        osc.connect(g);
+        g.connect(fxGain);
+        osc.start(t);
+        osc.stop(t + 0.8);
+      });
+    } else if (effect === 'boom') {
+      // Punchy sub bass drop impact
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(140, now);
+      osc.frequency.exponentialRampToValueAtTime(34, now + 0.55);
+      g.gain.setValueAtTime(0.001, now);
+      g.gain.linearRampToValueAtTime(0.75, now + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.75);
+      osc.connect(g);
+      g.connect(fxGain);
+      osc.start(now);
+      osc.stop(now + 0.8);
+    } else if (effect === 'jingle') {
+      // Signature 4-note Radio Nexo gold ident sting
+      const notes = [523.25, 659.25, 783.99, 1046.5];
+      notes.forEach((f, idx) => {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = 'triangle';
+        const t = now + idx * 0.11;
+        osc.frequency.setValueAtTime(f, t);
+        g.gain.setValueAtTime(0.001, t);
+        g.gain.linearRampToValueAtTime(0.32, t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, t + (idx === 3 ? 0.9 : 0.35));
+        osc.connect(g);
+        g.connect(fxGain);
+        osc.start(t);
+        osc.stop(t + 1.0);
+      });
     }
   }
 

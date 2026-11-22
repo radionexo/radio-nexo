@@ -1,12 +1,14 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Volume2, Volume1, VolumeX, Music2 } from 'lucide-react';
+import { Play, Pause, Volume2, Volume1, VolumeX, Music2, Share2, Check } from 'lucide-react';
 import { radioStore } from '@/lib/radioStore';
+import { reactionsBus, ReactionEmoji, LiveReactionEvent } from '@/lib/reactionsBus';
 import { StationState } from '@/lib/types';
 
 const VOLUME_STORAGE_KEY = 'nexo_listener_volume_v1';
 const MUTED_STORAGE_KEY = 'nexo_listener_muted_v1';
+const REACTION_EMOJIS: ReactionEmoji[] = ['🔥', '❤️', '🎉', '👏', '💃'];
 
 interface PublicPlayerProps {
   onOpenRequestModal: () => void;
@@ -20,6 +22,8 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
   const [isMuted, setIsMuted] = useState(false);
   const [isIOSDevice, setIsIOSDevice] = useState(false);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
+  const [floatingReactions, setFloatingReactions] = useState<LiveReactionEvent[]>([]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isPlayingRef = useRef(false);
@@ -37,6 +41,17 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
       setIsIOSDevice(ios);
     }
+  }, []);
+
+  // Subscribe to real-time floating reactions from all listeners
+  useEffect(() => {
+    const unsub = reactionsBus.subscribe((evt) => {
+      setFloatingReactions((prev) => [...prev.slice(-16), evt]);
+      setTimeout(() => {
+        setFloatingReactions((prev) => prev.filter((r) => r.id !== evt.id));
+      }, 2500);
+    });
+    return () => unsub();
   }, []);
 
   // Restore saved volume and muted state from localStorage
@@ -93,7 +108,6 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     setIsMuted((prev) => {
       const next = !prev;
       if (audioRef.current) {
-        // Setting .muted works natively on iOS Safari (unlike .volume which Apple locks)
         audioRef.current.muted = next;
         audioRef.current.volume = next ? 0 : volume;
       }
@@ -102,6 +116,25 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       } catch {}
       return next;
     });
+  };
+
+  const handleShareRadio = async () => {
+    const shareData = {
+      title: 'RADIO NEXO · En Vivo',
+      text: `🔴 ¡Estoy escuchando ${displayTitle} en RADIO NEXO en vivo! Escúchala aquí:`,
+      url: 'https://radionexo.co',
+    };
+    try {
+      if (typeof navigator !== 'undefined' && navigator.share) {
+        await navigator.share(shareData);
+        return;
+      }
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(`${shareData.text} ${shareData.url}`);
+        setShareCopied(true);
+        setTimeout(() => setShareCopied(false), 2500);
+      }
+    } catch {}
   };
 
   // Sync station state in real-time
@@ -251,14 +284,22 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     return () => clearInterval(interval);
   }, [isPlaying, isLoading]);
 
+  const rawTitle = stationState.current_song_title || '';
+  const isLegacyPlaceholder = rawTitle === 'Summer Vibes' || rawTitle === 'NEXO Stream' || !rawTitle;
+  const displayTitle = isLegacyPlaceholder ? 'DJ EN VIVO' : rawTitle;
+  const displaySubtitle =
+    isLegacyPlaceholder || !stationState.current_song_artist
+      ? 'Sesión en Directo · Radio Nexo'
+      : stationState.current_song_artist;
+
   // iOS Lock Screen & Control Center integration (Media Session API)
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
-        title: 'RADIO NEXO · EN VIVO',
-        artist: 'Transmisión en Directo',
-        album: 'RADIO NEXO',
+        title: displayTitle,
+        artist: displaySubtitle,
+        album: 'RADIO NEXO · En Vivo',
         artwork: [
           {
             src: '/cover_default.webp',
@@ -281,7 +322,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
         }
       });
     } catch {}
-  }, [isPlaying]);
+  }, [isPlaying, displayTitle, displaySubtitle]);
 
   // 100% Synchronous Play/Pause handler (iOS Safari user-gesture safe)
   const togglePlay = async () => {
@@ -301,7 +342,6 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     setStatusNotice(null);
 
     try {
-      // Connect immediately and synchronously to preserve iOS Safari gesture token
       audio.src = getBestLiveStreamUrl(audio);
       audio.volume = isMuted ? 0 : (volume || 0.85);
       await audio.play();
@@ -309,7 +349,6 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       setIsLoading(false);
     } catch (err) {
       console.warn('Error iniciando stream principal:', err);
-      // If HLS was still warming up on iOS, try MP3 fallback directly
       if (isAppleHlsDevice(audio)) {
         try {
           audio.src = getBestLiveStreamUrl(audio, true);
@@ -335,6 +374,19 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
 
   return (
     <div className="relative flex flex-col items-center justify-center w-full max-w-2xl mx-auto px-4 py-1 sm:py-2">
+      {/* Floating Live Reactions Overlay */}
+      <div className="pointer-events-none fixed sm:absolute inset-x-0 bottom-24 sm:bottom-16 h-56 overflow-hidden z-30">
+        {floatingReactions.map((r) => (
+          <span
+            key={r.id}
+            className="absolute bottom-0 text-2xl sm:text-3xl animate-float-reaction select-none drop-shadow-lg"
+            style={{ left: `${r.x}%` }}
+          >
+            {r.emoji}
+          </span>
+        ))}
+      </div>
+
       {/* Vinyl Aura & Rotating Center Disc */}
       <div className="relative flex items-center justify-center my-2 sm:my-3 group">
         {/* Radial Dotted Audio Glow Ring */}
@@ -382,8 +434,8 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
               <span className="text-[9px] sm:text-[11px] font-semibold tracking-widest uppercase text-white/90 drop-shadow-md">
                 RADIO NEXO
               </span>
-              <span className="text-xs sm:text-lg font-bold tracking-wider uppercase text-white drop-shadow-lg truncate max-w-[85%]">
-                EN VIVO
+              <span className="text-xs sm:text-base font-bold tracking-wider uppercase text-white drop-shadow-lg truncate max-w-[85%]">
+                {displayTitle}
               </span>
             </div>
           </div>
@@ -391,10 +443,10 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       </div>
 
       {/* Station Live Metadata Display */}
-      <div className="text-center mt-1 sm:mt-2 z-10">
+      <div className="text-center mt-1 sm:mt-2 z-10 px-2">
         <div className="flex items-center justify-center gap-2">
           {isDjLive && (
-            <span className="relative flex h-3 w-3">
+            <span className="relative flex h-3 w-3 shrink-0">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-500 opacity-75" />
               <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500" />
             </span>
@@ -404,11 +456,11 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
               isDjLive ? 'text-rose-400 font-black' : 'text-white'
             }`}
           >
-            {isDjLive ? 'DJ EN VIVO' : 'RADIO NEXO'}
+            {displayTitle}
           </h2>
         </div>
         <p className="text-xs sm:text-sm font-medium text-[#e5b45f] mt-0.5 tracking-wide">
-          Sesión en Directo · Radio Nexo
+          {displaySubtitle}
         </p>
       </div>
 
@@ -439,7 +491,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
           )}
         </button>
 
-        {/* Volume Control Pill: Full slider on Desktop/Android, native Mute pill on iOS (Apple locks HTMLAudioElement.volume) */}
+        {/* Volume Control Pill: Full slider on Desktop/Android, native Mute pill on iOS */}
         <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-full bg-black/40 border border-white/10 backdrop-blur-md transition-all shadow-md">
           <button
             type="button"
@@ -488,8 +540,8 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
         </div>
       </div>
 
-      {/* Live Badge Status & Song Request Button */}
-      <div className="mt-3 sm:mt-4 flex flex-wrap items-center justify-center gap-2.5 z-10">
+      {/* Live Badge Status, Song Request & Share Buttons */}
+      <div className="mt-3 sm:mt-4 flex flex-wrap items-center justify-center gap-2 z-10">
         <div
           className={`inline-flex items-center gap-2 px-3.5 py-1 rounded-full border backdrop-blur-md transition-all ${
             isDjLive
@@ -514,7 +566,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
               isDjLive ? 'text-rose-400' : 'text-[#e5b45f]'
             }`}
           >
-            {isDjLive ? '🔴 AL AIRE · DJ EN VIVO' : 'EN VIVO · RADIO NEXO'}
+            {isDjLive ? '🔴 AL AIRE' : 'EN VIVO · RADIO NEXO'}
           </span>
         </div>
 
@@ -529,6 +581,43 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
           <Music2 className="w-3 h-3 text-[#e5b45f]" />
           <span>Pedir canción</span>
         </button>
+
+        {/* Share Radio Button */}
+        <button
+          type="button"
+          onClick={handleShareRadio}
+          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-white/15 bg-white/5 hover:bg-white/15 text-gray-200 hover:text-white text-[11px] font-semibold transition-all transform active:scale-95 cursor-pointer"
+          title="Compartir Radio Nexo con tus amigos"
+          aria-label="Compartir radio"
+        >
+          {shareCopied ? (
+            <>
+              <Check className="w-3 h-3 text-emerald-400" />
+              <span className="text-emerald-300">¡Enlace copiado!</span>
+            </>
+          ) : (
+            <>
+              <Share2 className="w-3 h-3 text-[#e5b45f]" />
+              <span>Compartir</span>
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Interactive Live Reactions Bar */}
+      <div className="mt-2.5 flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-full bg-black/35 border border-white/10 backdrop-blur-md z-10">
+        {REACTION_EMOJIS.map((emoji) => (
+          <button
+            key={emoji}
+            type="button"
+            onClick={() => reactionsBus.send(emoji)}
+            className="w-8 h-8 rounded-full flex items-center justify-center text-base hover:bg-white/10 hover:scale-125 active:scale-90 transition-all cursor-pointer select-none"
+            title={`Enviar reacción ${emoji}`}
+            aria-label={`Enviar reacción ${emoji}`}
+          >
+            {emoji}
+          </button>
+        ))}
       </div>
     </div>
   );

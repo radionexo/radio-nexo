@@ -10,9 +10,15 @@ import {
   Settings2,
   Signal,
   Sliders,
+  Sparkles,
+  Check,
+  Wifi,
+  WifiOff,
+  Type,
 } from 'lucide-react';
 import { audioEngine } from '@/lib/audioEngine';
 import { radioStore } from '@/lib/radioStore';
+import { reactionsBus, LiveReactionEvent } from '@/lib/reactionsBus';
 import { StudioChatHub } from '@/components/studio/StudioChatHub';
 import { MicrophoneSettingsModal } from '@/components/studio/MicrophoneSettingsModal';
 import { OnlineListenersModal } from '@/components/studio/OnlineListenersModal';
@@ -94,6 +100,19 @@ function LiveWaveform({ isActive }: { isActive: boolean }) {
   );
 }
 
+const SOUNDBOARD_EFFECTS: {
+  id: 'airhorn' | 'applause' | 'riser' | 'chime' | 'boom' | 'jingle';
+  label: string;
+  emoji: string;
+}[] = [
+  { id: 'airhorn', label: 'Airhorn DJ', emoji: '📯' },
+  { id: 'applause', label: 'Aplausos', emoji: '👏' },
+  { id: 'riser', label: 'Subida / Drop', emoji: '🚀' },
+  { id: 'chime', label: 'Campana', emoji: '🔔' },
+  { id: 'boom', label: 'Impacto Boom', emoji: '💥' },
+  { id: 'jingle', label: 'Jingle Nexo', emoji: '✨' },
+];
+
 export default function StudioDashboardPage() {
   const [stationState, setStationState] = useState<StationState>(radioStore.getStationState());
   const [engineState, setEngineState] = useState(audioEngine.getState());
@@ -103,9 +122,38 @@ export default function StudioDashboardPage() {
   const [isDiscordModalOpen, setIsDiscordModalOpen] = useState(false);
   const [onlineListeners, setOnlineListeners] = useState<OnlineListener[]>([]);
 
+  // Live Show Title / Subtitle editor
+  const [showTitleInput, setShowTitleInput] = useState(
+    () => radioStore.getStationState().current_song_title || 'DJ EN VIVO'
+  );
+  const [showSubtitleInput, setShowSubtitleInput] = useState(
+    () => radioStore.getStationState().current_song_artist || 'Sesión en Directo · Radio Nexo'
+  );
+  const [titleSavedToast, setTitleSavedToast] = useState(false);
+
+  // Live Bridge / Tunnel Monitor
+  const [bridgeStatus, setBridgeStatus] = useState<{
+    online: boolean;
+    isBroadcasting: boolean;
+    audioListeners: number;
+    bitrate: number;
+    hlsReady: boolean;
+  }>({
+    online: false,
+    isBroadcasting: false,
+    audioListeners: 0,
+    bitrate: 128,
+    hlsReady: false,
+  });
+
+  // Incoming audience reactions floating in studio
+  const [floatingReactions, setFloatingReactions] = useState<LiveReactionEvent[]>([]);
+  const [activeFx, setActiveFx] = useState<string | null>(null);
+
   useEffect(() => {
     const updateState = () => {
-      setStationState(radioStore.getStationState());
+      const st = radioStore.getStationState();
+      setStationState(st);
       setEngineState(audioEngine.getState());
       setOnlineListeners(radioStore.getOnlineListeners());
     };
@@ -114,14 +162,64 @@ export default function StudioDashboardPage() {
     const unsubEngine = audioEngine.subscribe(() => {
       setEngineState(audioEngine.getState());
     });
+    const unsubReactions = reactionsBus.subscribe((evt) => {
+      setFloatingReactions((prev) => [...prev.slice(-14), evt]);
+      setTimeout(() => {
+        setFloatingReactions((prev) => prev.filter((r) => r.id !== evt.id));
+      }, 2500);
+    });
 
     updateState();
 
     return () => {
       unsubStore();
       unsubEngine();
+      unsubReactions();
     };
   }, []);
+
+  // Poll active Cloudflare Tunnel / Bridge status every 5 seconds
+  useEffect(() => {
+    let mounted = true;
+    const checkBridge = async () => {
+      const rawUrl = radioStore.getStationState()?.current_song_url || '';
+      const bridgeBase =
+        rawUrl.startsWith('https://') && !rawUrl.endsWith('.mp3') && !rawUrl.includes('/songs/')
+          ? rawUrl.replace(/\/+$/, '')
+          : '';
+      if (!bridgeBase) {
+        if (mounted) {
+          setBridgeStatus((prev) => ({ ...prev, online: false, isBroadcasting: false, audioListeners: 0 }));
+        }
+        return;
+      }
+      try {
+        const res = await fetch(`${bridgeBase}/status`, { cache: 'no-store' });
+        if (!res.ok) throw new Error('offline');
+        const data = await res.json();
+        if (mounted) {
+          setBridgeStatus({
+            online: data.status === 'online',
+            isBroadcasting: Boolean(data.isBroadcasting),
+            audioListeners: Number(data.listenersCount || 0),
+            bitrate: Number(data.bitrate || 128),
+            hlsReady: Boolean(data.hlsReady),
+          });
+        }
+      } catch {
+        if (mounted) {
+          setBridgeStatus((prev) => ({ ...prev, online: false, isBroadcasting: false }));
+        }
+      }
+    };
+
+    checkBridge();
+    const timer = setInterval(checkBridge, 5000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, [stationState.current_song_url]);
 
   const formatAirTime = (totalSecs: number) => {
     const h = Math.floor(totalSecs / 3600);
@@ -169,6 +267,24 @@ export default function StudioDashboardPage() {
     }
   };
 
+  const handleSaveShowTitle = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanTitle = showTitleInput.trim() || 'DJ EN VIVO';
+    const cleanSub = showSubtitleInput.trim() || 'Sesión en Directo · Radio Nexo';
+    radioStore.updateStationState({
+      current_song_title: cleanTitle,
+      current_song_artist: cleanSub,
+    });
+    setTitleSavedToast(true);
+    setTimeout(() => setTitleSavedToast(false), 2200);
+  };
+
+  const handleTriggerFx = (id: 'airhorn' | 'applause' | 'riser' | 'chime' | 'boom' | 'jingle') => {
+    setActiveFx(id);
+    audioEngine.playSoundEffect(id);
+    setTimeout(() => setActiveFx((prev) => (prev === id ? null : prev)), 400);
+  };
+
   const isLiveOnAir = engineState.isMicOnAir || engineState.isBroadcasting;
 
   return (
@@ -177,7 +293,7 @@ export default function StudioDashboardPage() {
       {/* TOP STATUS BAR */}
       {/* ========================================================= */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-2xl glass-panel border border-white/5">
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2.5 flex-wrap">
           {isLiveOnAir ? (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-rose-500/15 border border-rose-500/40 text-rose-400 text-xs font-semibold">
               <span className="relative flex h-2.5 w-2.5">
@@ -187,16 +303,37 @@ export default function StudioDashboardPage() {
               <span>EN VIVO · {formatAirTime(engineState.airTimeSeconds)}</span>
             </div>
           ) : (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 text-xs font-semibold">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span>Cabina lista · Transmisión directa por micrófono</span>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-gray-300 text-xs font-semibold">
+              <span className="w-2 h-2 rounded-full bg-amber-400" />
+              <span>Cabina en espera</span>
             </div>
           )}
+
+          {/* Real-time Antena / Tunnel Health Pill */}
+          <div
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-semibold ${
+              bridgeStatus.online
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+            }`}
+            title={
+              bridgeStatus.online
+                ? `Puente conectado (${bridgeStatus.bitrate}k MP3${bridgeStatus.hlsReady ? ' + Apple HLS' : ''})`
+                : 'Abre iniciar-radio.bat en tu PC para encender la antena'
+            }
+          >
+            {bridgeStatus.online ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
+            <span>
+              {bridgeStatus.online
+                ? `Antena Online (${bridgeStatus.bitrate}k${bridgeStatus.hlsReady ? ' + iOS' : ''})`
+                : 'Antena Apagada (Abre iniciar-radio.bat)'}
+            </span>
+          </div>
 
           {/* Interactive Listeners Badge */}
           <button
             onClick={() => setIsListenersModalOpen(true)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-gray-300 hover:text-white transition-all shadow-sm group active:scale-95"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-gray-300 hover:text-white transition-all shadow-sm group active:scale-95 cursor-pointer"
             title="Ver quiénes nos están escuchando en vivo"
           >
             <Users className="w-3.5 h-3.5 text-[#e5b45f] group-hover:scale-110 transition-transform" />
@@ -204,7 +341,7 @@ export default function StudioDashboardPage() {
               <strong className="text-white font-bold underline decoration-[#e5b45f]/40 underline-offset-4">
                 {stationState.listeners_count}
               </strong>{' '}
-              {stationState.listeners_count === 1 ? 'oyente conectado' : 'oyentes conectados'}
+              {stationState.listeners_count === 1 ? 'oyente' : 'oyentes'}
             </span>
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
           </button>
@@ -213,7 +350,7 @@ export default function StudioDashboardPage() {
         <div className="flex items-center gap-3">
           <button
             onClick={handleToggleBroadcast}
-            className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all shadow-md ${
+            className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all shadow-md cursor-pointer ${
               isLiveOnAir
                 ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/30'
                 : 'bg-[#e5b45f] hover:bg-[#f3c87a] text-black shadow-[#e5b45f]/25'
@@ -225,7 +362,7 @@ export default function StudioDashboardPage() {
           {/* Discord Settings Button */}
           <button
             onClick={() => setIsDiscordModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#5865F2]/15 hover:bg-[#5865F2]/25 text-[#5865F2] hover:text-white border border-[#5865F2]/30 text-xs font-semibold transition-all shadow-sm active:scale-95 group"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#5865F2]/15 hover:bg-[#5865F2]/25 text-[#5865F2] hover:text-white border border-[#5865F2]/30 text-xs font-semibold transition-all shadow-sm active:scale-95 group cursor-pointer"
             title="Cambiar enlace oficial de Discord"
           >
             <svg className="w-3.5 h-3.5 fill-current shrink-0 group-hover:scale-110 transition-transform" viewBox="0 0 24 24">
@@ -249,7 +386,7 @@ export default function StudioDashboardPage() {
       {micError && (
         <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center justify-between">
           <span>{micError}</span>
-          <button onClick={() => setMicError('')} className="underline font-semibold ml-2">
+          <button onClick={() => setMicError('')} className="underline font-semibold ml-2 cursor-pointer">
             Entendido
           </button>
         </div>
@@ -259,10 +396,10 @@ export default function StudioDashboardPage() {
       {/* MAIN CABINA LAYOUT: LEFT MICROPHONE STAGE (7) + RIGHT CHAT (5) */}
       {/* ========================================================= */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
-        {/* LEFT COLUMN: LIVE MICROPHONE STAGE & MIXER */}
+        {/* LEFT COLUMN: LIVE MICROPHONE STAGE, SHOW TITLE, SOUNDBOARD & MIXER */}
         <div className="xl:col-span-7 flex flex-col gap-4 min-w-0">
           {/* HERO ON-AIR MICROPHONE STAGE */}
-          <div className="rounded-3xl relative overflow-hidden min-h-[380px] flex flex-col items-center justify-center p-8 border border-white/10 shadow-2xl">
+          <div className="rounded-3xl relative overflow-hidden min-h-[330px] flex flex-col items-center justify-center p-7 border border-white/10 shadow-2xl">
             <div
               className="absolute inset-0 bg-cover bg-center filter brightness-40"
               style={{ backgroundImage: `url('/bg_nexo_studio.webp')` }}
@@ -275,7 +412,20 @@ export default function StudioDashboardPage() {
               }`}
             />
 
-            <div className="relative z-10 flex flex-col items-center space-y-5 text-center w-full max-w-md">
+            {/* Floating Live Audience Reactions Overlay */}
+            <div className="pointer-events-none absolute inset-0 overflow-hidden z-20">
+              {floatingReactions.map((r) => (
+                <span
+                  key={r.id}
+                  className="absolute bottom-6 text-2xl sm:text-3xl animate-float-reaction select-none drop-shadow-lg"
+                  style={{ left: `${r.x}%` }}
+                >
+                  {r.emoji}
+                </span>
+              ))}
+            </div>
+
+            <div className="relative z-10 flex flex-col items-center space-y-4 text-center w-full max-w-md">
               <div
                 className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full font-bold text-xs shadow-lg border ${
                   engineState.isMicOnAir
@@ -324,16 +474,89 @@ export default function StudioDashboardPage() {
                   <Settings2 className="w-4 h-4 text-[#e5b45f]" />
                 </button>
               </div>
+            </div>
+          </div>
 
-              <p className="text-[11px] text-gray-400 max-w-sm leading-relaxed">
-                Todo el audio de la emisora (voz, consola o Virtual DJ) se transmite directamente desde tu entrada de micrófono seleccionada.
-              </p>
+          {/* EDITABLE LIVE SHOW TITLE & SUBTITLE CARD */}
+          <form
+            onSubmit={handleSaveShowTitle}
+            className="rounded-3xl glass-panel p-5 border border-white/5 space-y-3"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Type className="w-4 h-4 text-[#e5b45f]" />
+                <span className="text-xs font-bold uppercase tracking-wider text-white">
+                  Título en Pantalla (radionexo.co y Celulares)
+                </span>
+              </div>
+              {titleSavedToast && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400">
+                  <Check className="w-3.5 h-3.5" />
+                  Actualizado en vivo
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+              <input
+                type="text"
+                value={showTitleInput}
+                onChange={(e) => setShowTitleInput(e.target.value)}
+                placeholder="Ej: Viernes de Salsa & Reggaetón"
+                maxLength={60}
+                className="sm:col-span-5 px-3.5 py-2 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#e5b45f]"
+              />
+              <input
+                type="text"
+                value={showSubtitleInput}
+                onChange={(e) => setShowSubtitleInput(e.target.value)}
+                placeholder="Ej: DJ Pedro · En Directo"
+                maxLength={60}
+                className="sm:col-span-5 px-3.5 py-2 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#e5b45f]"
+              />
+              <button
+                type="submit"
+                className="sm:col-span-2 px-3 py-2 rounded-xl bg-[#e5b45f] hover:bg-[#f3c87a] text-black font-bold text-xs transition-all active:scale-95 cursor-pointer"
+              >
+                Actualizar
+              </button>
+            </div>
+          </form>
+
+          {/* LIVE SOUNDBOARD (BOTONERA DE EFECTOS EN VIVO) */}
+          <div className="rounded-3xl glass-panel p-5 border border-white/5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-[#e5b45f]" />
+                <span className="text-xs font-bold uppercase tracking-wider text-white">
+                  Botonera de Efectos (Salen directo al aire)
+                </span>
+              </div>
+              <span className="text-[10px] text-gray-400">1 clic · Mezcla directa</span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {SOUNDBOARD_EFFECTS.map((fx) => (
+                <button
+                  key={fx.id}
+                  type="button"
+                  onClick={() => handleTriggerFx(fx.id)}
+                  className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-semibold transition-all active:scale-95 cursor-pointer ${
+                    activeFx === fx.id
+                      ? 'bg-[#e5b45f] text-black border-[#f3c87a] shadow-lg shadow-[#e5b45f]/30 scale-[0.98]'
+                      : 'bg-white/5 hover:bg-white/10 text-gray-200 border-white/10 hover:border-[#e5b45f]/40'
+                  }`}
+                >
+                  <span className="text-base leading-none">{fx.emoji}</span>
+                  <span>{fx.label}</span>
+                </button>
+              ))}
             </div>
           </div>
 
           {/* MICROPHONE & MASTER MIXER CARD */}
-          <div className="rounded-3xl glass-panel p-6 border border-white/5 space-y-5">
-            <div className="flex items-center justify-between pb-3 border-b border-white/5">
+          <div className="rounded-3xl glass-panel p-5 border border-white/5 space-y-4">
+            <div className="flex items-center justify-between pb-2.5 border-b border-white/5">
               <div className="flex items-center gap-2">
                 <Sliders className="w-4 h-4 text-[#e5b45f]" />
                 <span className="text-xs font-bold uppercase tracking-wider text-white">
@@ -389,7 +612,7 @@ export default function StudioDashboardPage() {
             </div>
 
             {/* Master Volume */}
-            <div className="space-y-2 pt-3 border-t border-white/5">
+            <div className="space-y-2 pt-2.5 border-t border-white/5">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-gray-300 font-semibold">Master Salida</span>
                 <span className="font-mono text-white font-semibold">{Math.round(engineState.masterVolume * 100)}%</span>
@@ -406,12 +629,14 @@ export default function StudioDashboardPage() {
             </div>
 
             {/* Signal Info Strip */}
-            <div className="grid grid-cols-2 gap-3 pt-2">
+            <div className="grid grid-cols-2 gap-3 pt-1">
               <div className="flex items-center gap-2.5 p-3 rounded-2xl bg-white/5 border border-white/5">
                 <Signal className="w-4 h-4 text-emerald-400 shrink-0" />
                 <div className="min-w-0">
                   <p className="text-[10px] text-gray-400 uppercase tracking-wider">Señal de Salida</p>
-                  <p className="text-xs font-bold text-white truncate">MP3 192k + Apple HLS (iOS)</p>
+                  <p className="text-xs font-bold text-white truncate">
+                    MP3 {bridgeStatus.bitrate}k + Apple HLS (iOS)
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-2.5 p-3 rounded-2xl bg-white/5 border border-white/5">
@@ -431,7 +656,7 @@ export default function StudioDashboardPage() {
         <div className="xl:col-span-5 flex flex-col min-w-0">
           <StudioChatHub
             allSongs={[]}
-            className="h-[680px] xl:h-[720px] shadow-2xl"
+            className="h-[720px] xl:h-[820px] shadow-2xl"
           />
         </div>
       </div>

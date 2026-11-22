@@ -116,3 +116,27 @@
 .animate-pulse-live {
   animation: pulse-live 1.6s ease-in-out infinite;
 }
+
+/* Floating Live Reactions (Instagram/TikTok Live style) */
+@keyframes float-reaction {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.5);
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(-25px) scale(1.15);
+  }
+  80% {
+    opacity: 0.9;
+    transform: translateY(-145px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-195px) scale(0.8);
+  }
+}
+
+.animate-float-reaction {
+  animation: float-reaction 2.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
