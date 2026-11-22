@@ -357,43 +357,35 @@ export default function NexoRadioPublicPage() {
               <PublicPlayer onOpenRequestModal={() => setIsRequestModalOpen(true)} />
             </div>
 
-            {/* Discord Community Call-To-Action Banner */}
-            <div className="mt-3 shrink-0">
-              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#5865F2]/20 via-[#121526]/90 to-[#5865F2]/15 border border-[#5865F2]/30 hover:border-[#5865F2]/50 p-3.5 sm:p-4 backdrop-blur-xl shadow-xl shadow-black/40 transition-all group">
-                {/* Ambient glow */}
-                <div className="absolute -right-8 -top-8 w-32 h-32 bg-[#5865F2]/20 rounded-full blur-2xl pointer-events-none" />
-                <div className="absolute -left-8 -bottom-8 w-32 h-32 bg-[#e5b45f]/10 rounded-full blur-2xl pointer-events-none" />
-
-                <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
-                  {/* Left: Discord Icon & Value Proposition */}
-                  <div className="flex flex-col sm:flex-row items-center gap-3">
-                    <div className="w-11 h-11 rounded-2xl bg-[#5865F2] flex items-center justify-center text-white shadow-lg shadow-[#5865F2]/40 shrink-0 group-hover:scale-105 transition-transform">
-                      <svg className="w-6 h-6 fill-current" viewBox="0 0 24 24">
-                        <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
-                      </svg>
-                    </div>
-                    <div>
-                      <h3 className="text-xs sm:text-sm font-bold text-white tracking-wide mb-0.5">
-                        ¡Únete a la Comunidad Oficial en Discord!
-                      </h3>
-                      <p className="text-[11px] text-gray-300 leading-tight max-w-lg">
-                        Conecta con los locutores, participa en dinámicas exclusivas, pide temas y comparte con otros oyentes 24/7.
-                      </p>
-                    </div>
+            {/* Compact Discord Community Bar */}
+            <div className="mt-2 shrink-0 flex justify-center">
+              <a
+                href={discordInviteUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="relative overflow-hidden w-full max-w-lg flex items-center justify-between gap-3 px-3 py-2 rounded-xl bg-gradient-to-r from-[#5865F2]/20 via-[#121526]/90 to-[#5865F2]/15 border border-[#5865F2]/30 hover:border-[#5865F2]/60 backdrop-blur-xl shadow-lg shadow-black/30 transition-all group cursor-pointer"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-7 h-7 rounded-lg bg-[#5865F2] flex items-center justify-center text-white shadow-md shadow-[#5865F2]/40 shrink-0 group-hover:scale-105 transition-transform">
+                    <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                      <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+                    </svg>
                   </div>
-
-                  {/* Right: Join Button */}
-                  <a
-                    href={discordInviteUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-xs text-white bg-[#5865F2] hover:bg-[#4752c4] shadow-lg shadow-[#5865F2]/35 hover:shadow-[#5865F2]/60 hover:scale-[1.03] active:scale-95 transition-all cursor-pointer shrink-0 w-full sm:w-auto"
-                  >
-                    <span>Unirme al Discord</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
+                  <div className="min-w-0">
+                    <h3 className="text-xs font-bold text-white truncate">
+                      Comunidad Oficial en Discord
+                    </h3>
+                    <p className="text-[10px] text-gray-400 truncate">
+                      Pide temas, participa y comparte 24/7
+                    </p>
+                  </div>
                 </div>
-              </div>
+
+                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg font-bold text-[11px] text-white bg-[#5865F2] group-hover:bg-[#4752c4] shadow-md shadow-[#5865F2]/30 transition-all shrink-0">
+                  <span>Unirme</span>
+                  <ExternalLink className="w-3 h-3" />
+                </span>
+              </a>
             </div>
           </main>
 
