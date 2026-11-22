@@ -100,14 +100,12 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
     };
   }, []);
 
-  // Keep mic off on fresh studio load until DJ enters on-air
+  // Auto-resume live transmission seamlessly after F5 if DJ was already On Air
   useEffect(() => {
-    if (isAuthenticated) {
-      if (!audioEngine.getState().isMicOnAir) {
-        radioStore.updateStationState({ is_mic_active: false });
-      }
+    if (isAuthenticated && pathname !== '/studio/login') {
+      audioEngine.restoreSession();
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, pathname]);
 
   // Verify authentication once on initial mount (or if user is not authenticated yet)
   useEffect(() => {

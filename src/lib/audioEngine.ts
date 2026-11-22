@@ -745,6 +745,9 @@ class AudioEngine {
       radioStore.updateStationState({
         air_time_seconds: this.airTimeSeconds,
       });
+      if (this.airTimeSeconds % 5 === 0) {
+        this.persistSession();
+      }
       this.notify();
     }, 1000);
 
@@ -929,141 +932,100 @@ class AudioEngine {
     }
   }
 
-  // --- SESSION PERSISTENCE & AUTO-RESTORE ---
+  // --- SESSION PERSISTENCE & AUTO-RESTORE (F5 ZERO-DROP RECOVERY) ---
   public persistSession() {
     if (typeof window === 'undefined') return;
     try {
-      if (this.currentSong && (this.isPlaying || this.isBroadcasting)) {
-        const session = {
-          song: this.currentSong,
-          currentTime: this.audioElement ? this.audioElement.currentTime : 0,
-          isPlaying: this.isPlaying,
+      if (this.isBroadcasting || this.isMicOnAir) {
+        const liveSession = {
+          isLiveBroadcast: true,
           isBroadcasting: this.isBroadcasting,
+          isMicOnAir: this.isMicOnAir,
           airTimeSeconds: this.airTimeSeconds,
           savedAt: Date.now(),
         };
-        localStorage.setItem('nexo_playback_session_v1', JSON.stringify(session));
-      } else if (!this.isPlaying && !this.isBroadcasting) {
-        localStorage.removeItem('nexo_playback_session_v1');
+        localStorage.setItem('nexo_live_broadcast_session_v1', JSON.stringify(liveSession));
+      } else {
+        localStorage.removeItem('nexo_live_broadcast_session_v1');
       }
     } catch {}
   }
 
   public async restoreSession(): Promise<boolean> {
     if (typeof window === 'undefined') return false;
-    // Don't re-run if already actively playing
-    if (this.isPlaying && this.audioElement && !this.audioElement.paused) return true;
+    if (this.isBroadcasting && this.isMicOnAir) return true;
 
     try {
-      // 1. Microphone is strictly forced off on reload
-      this.isMicOnAir = false;
-      radioStore.updateStationState({ is_mic_active: false });
+      const broadcastEnabled = localStorage.getItem('nexo_broadcast_enabled') === 'true';
+      const savedLiveRaw = localStorage.getItem('nexo_live_broadcast_session_v1');
+      let savedLive: {
+        isLiveBroadcast?: boolean;
+        isBroadcasting?: boolean;
+        isMicOnAir?: boolean;
+        airTimeSeconds?: number;
+        savedAt?: number;
+      } | null = null;
 
-      // 2. Read saved playback session
-      const saved = localStorage.getItem('nexo_playback_session_v1');
-      let targetSong: Song | null = null;
-      let resumeTime = 0;
-      let shouldBroadcast = true;
-      let savedAirTime = 0;
-
-      if (saved) {
+      if (savedLiveRaw) {
         try {
-          const parsed = JSON.parse(saved);
-          if (parsed.song) {
-            targetSong = parsed.song;
-            const elapsed = Math.max(0, (Date.now() - (parsed.savedAt || Date.now())) / 1000);
-            resumeTime = (parsed.currentTime || 0) + (elapsed < 60 ? elapsed : 0);
-            const duration = parsed.song.duration || 300;
-            if (resumeTime >= duration) {
-              resumeTime = 0;
-            }
-            shouldBroadcast = parsed.isBroadcasting !== false;
-            savedAirTime = parsed.airTimeSeconds ? Math.floor(parsed.airTimeSeconds + elapsed) : 0;
-          }
+          savedLive = JSON.parse(savedLiveRaw);
         } catch {}
       }
 
-      // Fallback: check station state if session was not in playback session
-      if (!targetSong) {
-        const state = radioStore.getStationState();
-        if (state && state.is_live && state.current_song_title && state.current_song_title !== 'DJ EN VIVO') {
-          targetSong = {
-            id: state.current_song_id || 'restored-song',
-            title: state.current_song_title,
-            artist: state.current_song_artist || 'Radio Nexo',
-            file_url: state.current_song_url || '/songs/summer.mp3',
-            cover_url: state.current_song_cover || '/cover_default.webp',
-            duration: state.current_song_duration || 180,
-            genre: 'Pop',
-          };
-          resumeTime = state.current_song_progress || 0;
-          savedAirTime = state.air_time_seconds || 0;
-        }
+      const shouldResumeLive = broadcastEnabled || Boolean(savedLive?.isBroadcasting || savedLive?.isMicOnAir);
+      if (!shouldResumeLive) {
+        radioStore.updateStationState({ is_mic_active: false });
+        return false;
       }
 
-      if (!targetSong) return false;
-
-      this.init();
-      if (this.ctx && this.ctx.state === 'suspended') {
-        try { await this.ctx.resume(); } catch {}
+      // Preserve air time across F5 refresh
+      if (savedLive?.airTimeSeconds) {
+        const elapsed = Math.max(0, Math.floor((Date.now() - (savedLive.savedAt || Date.now())) / 1000));
+        this.airTimeSeconds = savedLive.airTimeSeconds + (elapsed < 180 ? elapsed : 0);
       }
 
-      this.currentSong = targetSong;
-      this.airTimeSeconds = savedAirTime;
+      const attachGestureFallback = () => {
+        this.needsUserInteraction = true;
+        this.notify();
 
-      radioStore.updateStationState({
-        is_mic_active: false,
-        is_live: true,
-        air_time_seconds: this.airTimeSeconds,
-        current_song_id: targetSong.id,
-        current_song_title: targetSong.title,
-        current_song_artist: targetSong.artist,
-        current_song_cover: targetSong.cover_url,
-        current_song_url: targetSong.file_url,
-        current_song_duration: targetSong.duration,
-        current_song_progress: Math.floor(resumeTime),
-      });
-
-      if (this.audioElement) {
-        this.audioElement.src = targetSong.file_url;
-        const setTime = () => {
-          if (this.audioElement && resumeTime > 0) {
-            this.audioElement.currentTime = resumeTime;
-          }
+        const oneTimeResume = async () => {
+          window.removeEventListener('click', oneTimeResume);
+          window.removeEventListener('keydown', oneTimeResume);
+          window.removeEventListener('touchstart', oneTimeResume);
+          await this.resumeFromGesture();
         };
-        this.audioElement.addEventListener('loadedmetadata', setTime, { once: true });
-        this.audioElement.load();
 
-        try {
-          await this.audioElement.play();
-          this.isPlaying = true;
-          if (resumeTime > 0) {
-            this.audioElement.currentTime = resumeTime;
-          }
-          if (shouldBroadcast) {
-            this.startBroadcasting();
-          }
-          this.needsUserInteraction = false;
-          this.persistSession();
-          this.notify();
-          return true;
-        } catch (autoplayErr) {
-          console.log('Autoplay restriction on page reload, awaiting interaction:', autoplayErr);
-          this.needsUserInteraction = true;
-          this.notify();
+        window.addEventListener('click', oneTimeResume, { once: true });
+        window.addEventListener('keydown', oneTimeResume, { once: true });
+        window.addEventListener('touchstart', oneTimeResume, { once: true });
+      };
 
-          const oneTimeResume = async () => {
-            window.removeEventListener('click', oneTimeResume);
-            window.removeEventListener('keydown', oneTimeResume);
-            window.removeEventListener('touchstart', oneTimeResume);
-            await this.resumeFromGesture();
-          };
+      try {
+        await this.enterOnAir();
+        if (!this.isBroadcasting) {
+          this.startBroadcasting();
+        }
 
-          window.addEventListener('click', oneTimeResume, { once: true });
-          window.addEventListener('keydown', oneTimeResume, { once: true });
-          window.addEventListener('touchstart', oneTimeResume, { once: true });
+        // If browser suspended AudioContext until user gesture, prompt 1-click wake
+        if (this.ctx && this.ctx.state === 'suspended') {
+          try {
+            await this.ctx.resume();
+          } catch {}
+        }
+
+        if (this.ctx && this.ctx.state === 'suspended') {
+          attachGestureFallback();
           return false;
         }
+
+        this.needsUserInteraction = false;
+        this.persistSession();
+        this.notify();
+        return true;
+      } catch (err) {
+        console.warn('[Studio Auto-Resume] Requiere interacción tras F5:', err);
+        attachGestureFallback();
+        return false;
       }
     } catch (e) {
       console.warn('Error in restoreSession:', e);
@@ -1074,21 +1036,29 @@ class AudioEngine {
   public async resumeFromGesture() {
     this.init();
     if (this.ctx && this.ctx.state === 'suspended') {
-      try { await this.ctx.resume(); } catch {}
-    }
-    if (this.audioElement) {
       try {
-        await this.audioElement.play();
-        this.isPlaying = true;
-        this.needsUserInteraction = false;
-        if (!this.isBroadcasting && typeof window !== 'undefined' && localStorage.getItem('nexo_broadcast_enabled') !== 'false') {
+        await this.ctx.resume();
+      } catch {}
+    }
+    try {
+      const shouldResumeLive =
+        typeof window !== 'undefined' &&
+        (localStorage.getItem('nexo_broadcast_enabled') === 'true' ||
+          Boolean(localStorage.getItem('nexo_live_broadcast_session_v1')));
+
+      if (shouldResumeLive) {
+        if (!this.isMicOnAir) {
+          await this.enterOnAir();
+        }
+        if (!this.isBroadcasting) {
           this.startBroadcasting();
         }
-        this.persistSession();
-        this.notify();
-      } catch (e) {
-        console.warn('Error resuming audio from gesture:', e);
       }
+      this.needsUserInteraction = false;
+      this.persistSession();
+      this.notify();
+    } catch (e) {
+      console.warn('Error resuming live broadcast from gesture:', e);
     }
   }
 

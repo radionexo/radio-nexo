@@ -8,6 +8,7 @@ import { StationState } from '@/lib/types';
 
 const VOLUME_STORAGE_KEY = 'nexo_listener_volume_v1';
 const MUTED_STORAGE_KEY = 'nexo_listener_muted_v1';
+const WAS_PLAYING_SESSION_KEY = 'nexo_listener_was_playing_v1';
 const REACTION_EMOJIS: ReactionEmoji[] = ['🔥', '❤️', '🎉', '👏', '💃'];
 
 interface PublicPlayerProps {
@@ -243,6 +244,38 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     };
   }, []);
 
+  // Auto-resume live playback after F5 if the listener was already listening (Desktop/Android autoplay-permissive browsers)
+  const autoResumeAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (autoResumeAttemptedRef.current || isPlayingRef.current) return;
+    if (typeof window === 'undefined') return;
+    const wasPlaying = sessionStorage.getItem(WAS_PLAYING_SESSION_KEY) === 'true';
+    if (!wasPlaying) return;
+
+    const base = getActiveBridgeBase();
+    if (!base && !stationState.is_live) return;
+
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    autoResumeAttemptedRef.current = true;
+    audio.src = getBestLiveStreamUrl(audio);
+    audio.muted = isMuted || volume === 0;
+    audio.volume = isMuted ? 0 : (volume || 0.85);
+    audio
+      .play()
+      .then(() => {
+        setIsPlaying(true);
+        setIsLoading(false);
+        setStatusNotice(null);
+      })
+      .catch(() => {
+        // Browser blocked autoplay (e.g. iOS Safari): stay cleanly paused for 1-tap play
+        audio.src = '';
+        setIsLoading(false);
+      });
+  }, [stationState.current_song_url, stationState.is_live, isMuted, volume]);
+
   // Update volume & muted state (using .muted guarantees iOS Safari compatibility)
   useEffect(() => {
     if (audioRef.current) {
@@ -335,6 +368,9 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       setIsPlaying(false);
       setIsLoading(false);
       setStatusNotice(null);
+      try {
+        sessionStorage.setItem(WAS_PLAYING_SESSION_KEY, 'false');
+      } catch {}
       return;
     }
 
@@ -347,6 +383,9 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
       await audio.play();
       setIsPlaying(true);
       setIsLoading(false);
+      try {
+        sessionStorage.setItem(WAS_PLAYING_SESSION_KEY, 'true');
+      } catch {}
     } catch (err) {
       console.warn('Error iniciando stream principal:', err);
       if (isAppleHlsDevice(audio)) {
