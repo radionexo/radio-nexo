@@ -4,11 +4,14 @@ import { supabase, isSupabaseConfigured } from './supabase';
 import { ChatMessage } from './types';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
-const STORAGE_KEY = 'nexo_live_chat_messages_v1';
+const STORAGE_KEY = 'nexo_live_chat_messages_v2';
+const PINNED_KEY = 'nexo_live_chat_pinned_v1';
 const USERNAME_KEY = 'nexo_chat_username';
 const USER_ID_KEY = 'nexo_chat_user_id';
 const HAS_CUSTOM_NAME_KEY = 'nexo_chat_has_custom_name_v1';
-const MAX_MESSAGES = 250;
+const MAX_MESSAGES = 120;
+const LISTENER_COOLDOWN_MS = 1500;
+const MAX_MESSAGE_LENGTH = 280;
 
 function generateUUID(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -21,39 +24,15 @@ function generateUUID(): string {
   });
 }
 
-const DEFAULT_MESSAGES: ChatMessage[] = [
-  {
-    id: 'seed-1',
-    user_name: '🎧 NEXO DJ',
-    text: '¡Bienvenidos a la transmisión en vivo de Radio Nexo! ¿Desde dónde nos escuchas?',
-    created_at: new Date(Date.now() - 300000).toISOString(),
-    is_dj: true,
-  },
-  {
-    id: 'seed-2',
-    user_name: 'Sofía M.',
-    text: '¡Conectada desde Medellín! Excelente programación hoy ☀️🎧',
-    created_at: new Date(Date.now() - 240000).toISOString(),
-    is_dj: false,
-  },
-  {
-    id: 'seed-3',
-    user_name: 'Carlos Ruiz',
-    text: 'Esa canción está genial, súbanle el volumen 🔥🙌',
-    created_at: new Date(Date.now() - 120000).toISOString(),
-    is_dj: false,
-  },
-  {
-    id: 'seed-4',
-    user_name: 'Valentina P.',
-    text: 'Saludos a toda la cabina de Radio Nexo ❤️✨',
-    created_at: new Date(Date.now() - 40000).toISOString(),
-    is_dj: false,
-  },
-];
-
 class ChatStore {
   private messages: ChatMessage[] = [];
+  private seenIds: Set<string> = new Set();
+  private pinnedMessage: ChatMessage | null = null;
+  private typingUsers: Map<string, { userName: string; expiresAt: number }> = new Map();
+  private typingCleanupTimer: ReturnType<typeof setInterval> | null = null;
+  private lastTypingBroadcastAt = 0;
+  private lastSentAt = 0;
+
   private listeners: Set<() => void> = new Set();
   private incomingListeners: Set<(msg: ChatMessage) => void> = new Set();
   private channel: RealtimeChannel | null = null;
@@ -67,13 +46,19 @@ class ChatStore {
     }
   }
 
+  private rebuildSeenIds() {
+    this.seenIds = new Set(this.messages.map((m) => m.id));
+  }
+
   private deduplicateMessages(list: ChatMessage[]): ChatMessage[] {
     const result: ChatMessage[] = [];
-    const seenIds = new Set<string>();
+    const seen = new Set<string>();
 
     for (const msg of list) {
       if (!msg || !msg.text) continue;
-      if (seenIds.has(msg.id)) continue;
+      // Filter out legacy fake seed messages if present in old storage
+      if (typeof msg.id === 'string' && msg.id.startsWith('seed-')) continue;
+      if (seen.has(msg.id)) continue;
 
       const msgTime = new Date(msg.created_at).getTime();
       const isDuplicate = result.some((existing) => {
@@ -84,7 +69,7 @@ class ChatStore {
       });
 
       if (!isDuplicate) {
-        seenIds.add(msg.id);
+        seen.add(msg.id);
         result.push(msg);
       }
     }
@@ -96,33 +81,56 @@ class ChatStore {
     if (this.initialized) return;
     this.initialized = true;
 
-    // Load cached messages from localStorage and purge any existing duplicates
+    // Load cached real messages from localStorage
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          this.messages = this.deduplicateMessages(parsed);
-          this.saveToStorage();
-        } else {
-          this.messages = [...DEFAULT_MESSAGES];
+        if (Array.isArray(parsed)) {
+          this.messages = this.deduplicateMessages(parsed).slice(-MAX_MESSAGES);
+          this.rebuildSeenIds();
           this.saveToStorage();
         }
-      } else {
-        this.messages = [...DEFAULT_MESSAGES];
-        this.saveToStorage();
+      }
+      const storedPin = localStorage.getItem(PINNED_KEY);
+      if (storedPin) {
+        const parsedPin = JSON.parse(storedPin);
+        if (parsedPin && parsedPin.id && parsedPin.text) {
+          this.pinnedMessage = parsedPin;
+        }
       }
     } catch {
-      this.messages = [...DEFAULT_MESSAGES];
+      this.messages = [];
+      this.seenIds.clear();
     }
+
+    // Periodic cleanup for expired typing indicators
+    this.typingCleanupTimer = setInterval(() => {
+      const now = Date.now();
+      let changed = false;
+      this.typingUsers.forEach((val, key) => {
+        if (val.expiresAt <= now) {
+          this.typingUsers.delete(key);
+          changed = true;
+        }
+      });
+      if (changed) this.notify();
+    }, 1000);
 
     // Local tab-to-tab sync
     try {
       if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
         this.localBc = new BroadcastChannel('nexo_chat_local_sync');
         this.localBc.onmessage = (evt) => {
-          if (evt.data && evt.data.type === 'NEW_CHAT_MSG') {
+          if (!evt.data) return;
+          if (evt.data.type === 'NEW_CHAT_MSG') {
             this.appendMessage(evt.data.payload, false);
+          } else if (evt.data.type === 'DELETE_CHAT_MSG' && evt.data.id) {
+            this.applyDeleteLocal(evt.data.id);
+          } else if (evt.data.type === 'CLEAR_CHAT') {
+            this.applyClearLocal();
+          } else if (evt.data.type === 'PIN_CHAT_MSG') {
+            this.applyPinLocal(evt.data.payload ?? null);
           }
         };
       }
@@ -145,6 +153,26 @@ class ChatStore {
               this.appendMessage(payload, false);
             }
           })
+          .on('broadcast', { event: 'delete_message' }, ({ payload }) => {
+            if (payload?.id) {
+              this.applyDeleteLocal(String(payload.id));
+            }
+          })
+          .on('broadcast', { event: 'clear_chat' }, () => {
+            this.applyClearLocal();
+          })
+          .on('broadcast', { event: 'pin_message' }, ({ payload }) => {
+            this.applyPinLocal(payload?.message ?? null);
+          })
+          .on('broadcast', { event: 'typing' }, ({ payload }) => {
+            if (payload?.userId && payload?.userName && payload.userId !== this.getUserId()) {
+              this.typingUsers.set(payload.userId, {
+                userName: payload.userName,
+                expiresAt: Date.now() + 3500,
+              });
+              this.notify();
+            }
+          })
           .on(
             'postgres_changes',
             { event: 'INSERT', schema: 'public', table: 'chat_messages' },
@@ -163,42 +191,48 @@ class ChatStore {
               }
             }
           )
-          .subscribe((status) => {
-            if (status === 'SUBSCRIBED') {
-              // Successfully connected to Supabase Realtime WebSocket
+          .on(
+            'postgres_changes',
+            { event: 'DELETE', schema: 'public', table: 'chat_messages' },
+            (payload) => {
+              const oldRow = payload.old as any;
+              if (oldRow?.id) {
+                this.applyDeleteLocal(String(oldRow.id));
+              }
             }
-          });
+          )
+          .subscribe();
 
-        // Read recent database messages if the table exists
+        // Fetch recent real messages from Supabase
         Promise.resolve(
           supabase
             .from('chat_messages')
             .select('*')
             .order('created_at', { ascending: false })
-            .limit(100)
+            .limit(MAX_MESSAGES)
         )
           .then(({ data, error }: any) => {
-            if (!error && data && data.length > 0) {
-              const formatted: ChatMessage[] = data.map((d: any) => ({
-                id: String(d.id),
-                user_name: d.user_name || 'Oyente',
-                text: d.text,
-                created_at: d.created_at || new Date().toISOString(),
-                is_dj: Boolean(d.is_dj),
-                user_id: d.user_id,
-              })).reverse();
+            if (!error && Array.isArray(data)) {
+              const formatted: ChatMessage[] = data
+                .map((d: any) => ({
+                  id: String(d.id),
+                  user_name: d.user_name || 'Oyente',
+                  text: d.text,
+                  created_at: d.created_at || new Date().toISOString(),
+                  is_dj: Boolean(d.is_dj),
+                  user_id: d.user_id,
+                }))
+                .reverse();
 
-              // Merge without duplicates
-              this.messages = this.deduplicateMessages([...this.messages, ...formatted])
+              this.messages = this.deduplicateMessages(formatted)
                 .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
                 .slice(-MAX_MESSAGES);
+              this.rebuildSeenIds();
               this.saveToStorage();
               this.notify();
             }
           })
-          .catch(() => {
-            // Silently continue if table does not exist
-          });
+          .catch(() => {});
       } catch (err) {
         console.warn('Error setting up Supabase chat channel:', err);
       }
@@ -214,13 +248,50 @@ class ChatStore {
     }
   }
 
+  private applyDeleteLocal(id: string) {
+    const beforeLen = this.messages.length;
+    this.messages = this.messages.filter((m) => m.id !== id);
+    this.seenIds.delete(id);
+    if (this.pinnedMessage?.id === id) {
+      this.applyPinLocal(null);
+    }
+    if (this.messages.length !== beforeLen) {
+      this.saveToStorage();
+      this.notify();
+    }
+  }
+
+  private applyClearLocal() {
+    this.messages = [];
+    this.seenIds.clear();
+    this.pinnedMessage = null;
+    this.unreadCount = 0;
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(PINNED_KEY);
+    } catch {}
+    this.notify();
+  }
+
+  private applyPinLocal(msg: ChatMessage | null) {
+    this.pinnedMessage = msg;
+    try {
+      if (msg) {
+        localStorage.setItem(PINNED_KEY, JSON.stringify(msg));
+      } else {
+        localStorage.removeItem(PINNED_KEY);
+      }
+    } catch {}
+    this.notify();
+  }
+
   private appendMessage(msg: ChatMessage, isLocalSender: boolean) {
     if (!msg || !msg.text) return;
 
-    // 1. Exact ID deduplication
-    if (this.messages.some((m) => m.id === msg.id)) return;
+    // 1. O(1) exact ID deduplication
+    if (this.seenIds.has(msg.id)) return;
 
-    // 2. Semantic deduplication: same user, exact same text, within 5 seconds window
+    // 2. Semantic deduplication within 5s window
     const nowTime = new Date(msg.created_at).getTime();
     const existingIndex = this.messages.findIndex((m) => {
       if (m.user_name !== msg.user_name) return false;
@@ -230,20 +301,25 @@ class ChatStore {
     });
 
     if (existingIndex !== -1) {
-      // It's the same message (e.g. from local optimistic add, broadcast, or postgres_changes)
       if (msg.id && this.messages[existingIndex].id !== msg.id) {
-        this.messages[existingIndex] = {
-          ...this.messages[existingIndex],
-          id: msg.id,
-        };
+        this.seenIds.delete(this.messages[existingIndex].id);
+        this.messages[existingIndex] = { ...this.messages[existingIndex], id: msg.id };
+        this.seenIds.add(msg.id);
         this.saveToStorage();
       }
       return;
     }
 
+    // Clear sender from typing list immediately
+    if (msg.user_id && this.typingUsers.has(msg.user_id)) {
+      this.typingUsers.delete(msg.user_id);
+    }
+
     this.messages.push(msg);
+    this.seenIds.add(msg.id);
     if (this.messages.length > MAX_MESSAGES) {
       this.messages = this.messages.slice(-MAX_MESSAGES);
+      this.rebuildSeenIds();
     }
     this.saveToStorage();
 
@@ -276,11 +352,25 @@ class ChatStore {
     return [...this.messages];
   }
 
+  public getPinnedMessage(): ChatMessage | null {
+    return this.pinnedMessage;
+  }
+
+  public getTypingUsers(): string[] {
+    const now = Date.now();
+    const active: string[] = [];
+    this.typingUsers.forEach((val) => {
+      if (val.expiresAt > now) active.push(val.userName);
+    });
+    return active;
+  }
+
   public getUnreadCount(): number {
     return this.unreadCount;
   }
 
   public clearUnread() {
+    if (this.unreadCount === 0) return;
     this.unreadCount = 0;
     this.notify();
   }
@@ -299,7 +389,6 @@ class ChatStore {
     if (typeof window === 'undefined') return 'Oyente';
     let name = localStorage.getItem(USERNAME_KEY);
     if (!name) {
-      // Pick a random default name
       const randomNum = Math.floor(100 + Math.random() * 900);
       name = `Oyente #${randomNum}`;
       localStorage.setItem(USERNAME_KEY, name);
@@ -331,19 +420,107 @@ class ChatStore {
     } catch {}
   }
 
+  public sendTyping(isDj = false) {
+    if (!this.channel) return;
+    const now = Date.now();
+    if (now - this.lastTypingBroadcastAt < 2000) return;
+    this.lastTypingBroadcastAt = now;
+
+    const userName = isDj ? '🎧 NEXO DJ' : this.getUserName();
+    this.channel
+      .send({
+        type: 'broadcast',
+        event: 'typing',
+        payload: { userId: this.getUserId(), userName },
+      })
+      .catch(() => {});
+  }
+
+  public async deleteMessage(id: string) {
+    this.applyDeleteLocal(id);
+
+    if (this.channel) {
+      this.channel
+        .send({
+          type: 'broadcast',
+          event: 'delete_message',
+          payload: { id },
+        })
+        .catch(() => {});
+    }
+
+    if (this.localBc) {
+      try {
+        this.localBc.postMessage({ type: 'DELETE_CHAT_MSG', id });
+      } catch {}
+    }
+
+    if (isSupabaseConfigured && supabase) {
+      Promise.resolve(supabase.from('chat_messages').delete().eq('id', id)).catch(() => {});
+    }
+  }
+
+  public async clearChat() {
+    this.applyClearLocal();
+
+    if (this.channel) {
+      this.channel
+        .send({
+          type: 'broadcast',
+          event: 'clear_chat',
+          payload: {},
+        })
+        .catch(() => {});
+    }
+
+    if (this.localBc) {
+      try {
+        this.localBc.postMessage({ type: 'CLEAR_CHAT' });
+      } catch {}
+    }
+  }
+
+  public async pinMessage(msg: ChatMessage | null) {
+    this.applyPinLocal(msg);
+
+    if (this.channel) {
+      this.channel
+        .send({
+          type: 'broadcast',
+          event: 'pin_message',
+          payload: { message: msg },
+        })
+        .catch(() => {});
+    }
+
+    if (this.localBc) {
+      try {
+        this.localBc.postMessage({ type: 'PIN_CHAT_MSG', payload: msg });
+      } catch {}
+    }
+  }
+
   public async sendMessage(
     text: string,
     options?: { isDj?: boolean; customName?: string }
   ): Promise<ChatMessage> {
-    const cleanText = text.trim();
+    const cleanText = text.trim().slice(0, MAX_MESSAGE_LENGTH);
     if (!cleanText) {
       throw new Error('El mensaje no puede estar vacío');
     }
 
     const isDj = Boolean(options?.isDj);
-    const userName = isDj
-      ? '🎧 NEXO DJ'
-      : options?.customName || this.getUserName();
+
+    // Anti-spam cooldown for listeners (DJ can send freely)
+    if (!isDj) {
+      const elapsed = Date.now() - this.lastSentAt;
+      if (elapsed < LISTENER_COOLDOWN_MS) {
+        throw new Error('Espera un segundo antes de enviar otro mensaje.');
+      }
+    }
+    this.lastSentAt = Date.now();
+
+    const userName = isDj ? '🎧 NEXO DJ' : options?.customName || this.getUserName();
 
     const newMsg: ChatMessage = {
       id: generateUUID(),
@@ -357,7 +534,7 @@ class ChatStore {
     // 1. Append locally
     this.appendMessage(newMsg, true);
 
-    // 2. Broadcast via Supabase Realtime channel (to other listeners)
+    // 2. Broadcast via Supabase Realtime channel
     if (this.channel) {
       try {
         await this.channel.send({
@@ -370,31 +547,27 @@ class ChatStore {
       }
     }
 
-    // 3. Sync to other tabs of the same browser
+    // 3. Sync to other tabs
     if (this.localBc) {
       try {
         this.localBc.postMessage({
           type: 'NEW_CHAT_MSG',
           payload: newMsg,
         });
-      } catch (e) {
-        // ignore
-      }
+      } catch {}
     }
 
-    // 4. Save to Supabase DB table with the EXACT SAME UUID
+    // 4. Persist to Supabase DB
     if (isSupabaseConfigured && supabase) {
       Promise.resolve(
-        supabase
-          .from('chat_messages')
-          .insert({
-            id: newMsg.id,
-            user_name: newMsg.user_name,
-            text: newMsg.text,
-            is_dj: newMsg.is_dj,
-            user_id: newMsg.user_id,
-            created_at: newMsg.created_at,
-          })
+        supabase.from('chat_messages').insert({
+          id: newMsg.id,
+          user_name: newMsg.user_name,
+          text: newMsg.text,
+          is_dj: newMsg.is_dj,
+          user_id: newMsg.user_id,
+          created_at: newMsg.created_at,
+        })
       ).catch(() => {});
     }
 

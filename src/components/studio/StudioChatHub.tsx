@@ -24,6 +24,10 @@ import {
   ExternalLink,
   Clock,
   Users,
+  Pin,
+  Trash2,
+  Reply,
+  Megaphone,
 } from 'lucide-react';
 import { chatStore } from '@/lib/chatStore';
 import { radioStore } from '@/lib/radioStore';
@@ -44,6 +48,9 @@ export function StudioChatHub({
 }: StudioChatHubProps) {
   const [activeTab, setActiveTab] = useState<'chat' | 'solicitudes' | 'oyentes'>('chat');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [pinnedMessage, setPinnedMessage] = useState<ChatMessage | null>(null);
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [confirmClearChat, setConfirmClearChat] = useState(false);
   const [requests, setRequests] = useState<SongRequest[]>([]);
   const [onlineListeners, setOnlineListeners] = useState<OnlineListener[]>([]);
   const [inputText, setInputText] = useState('');
@@ -62,6 +69,8 @@ export function StudioChatHub({
   useEffect(() => {
     // 1. Initial data
     setMessages(chatStore.getMessages());
+    setPinnedMessage(chatStore.getPinnedMessage());
+    setTypingUsers(chatStore.getTypingUsers());
     radioStore.getRequests().then((reqs) => setRequests(reqs));
     setOnlineListeners(radioStore.getOnlineListeners());
     setSoundEnabled(soundEffects.isEnabled());
@@ -70,6 +79,8 @@ export function StudioChatHub({
     // 2. Chat store updates
     const unsubChat = chatStore.subscribe(() => {
       setMessages(chatStore.getMessages());
+      setPinnedMessage(chatStore.getPinnedMessage());
+      setTypingUsers(chatStore.getTypingUsers());
     });
 
     // 3. Incoming chat sound alert
@@ -180,37 +191,33 @@ export function StudioChatHub({
     soundEffects.toggle();
   };
 
-  // Quick approve & queue a request
-  const handleQueueRequest = (req: SongRequest) => {
-    // 1. Try to find match in library
-    const match = allSongs.find(
-      (s) =>
-        s.title.toLowerCase().includes(req.song_title.toLowerCase()) ||
-        s.artist.toLowerCase().includes(req.artist.toLowerCase())
+  // Announce requested song live in chat and mark as reviewed
+  const handleAnnounceRequest = (req: SongRequest) => {
+    const dedicationPart = req.dedication ? ` — "${req.dedication}"` : '';
+    chatStore.sendMessage(
+      `🎵 ¡Próxima canción pedida por ${req.name}: "${req.song_title}" de ${req.artist}!${dedicationPart}`,
+      { isDj: true }
     );
+    radioStore.updateRequestStatus(req.id, 'reviewed');
+    if (onSongQueued) onSongQueued(req.song_title);
+    setActiveTab('chat');
+    setTimeout(() => scrollToBottom(true), 100);
+  };
 
-    if (match) {
-      radioStore.addToQueue(match);
-      radioStore.updateRequestStatus(req.id, 'reviewed');
-      if (onSongQueued) onSongQueued(match.title);
-    } else {
-      // Create temporary song item for queue
-      const tempSong: Song = {
-        id: 'req-song-' + Date.now(),
-        title: req.song_title,
-        artist: req.artist,
-        genre: 'Solicitud',
-        file_url: '/songs/summer.mp3',
-        cover_url: '/cover_default.webp',
-        duration: 210,
-        play_count: 0,
-        is_favorite: false,
-        created_at: new Date().toISOString(),
-      };
-      radioStore.addToQueue(tempSong);
-      radioStore.updateRequestStatus(req.id, 'reviewed');
-      if (onSongQueued) onSongQueued(tempSong.title);
+  const handleClearChatClick = () => {
+    if (!confirmClearChat) {
+      setConfirmClearChat(true);
+      setTimeout(() => setConfirmClearChat(false), 3500);
+      return;
     }
+    chatStore.clearChat();
+    setConfirmClearChat(false);
+  };
+
+  const handleReplyToUser = (name: string) => {
+    const clean = name.replace(/^🎧\s*/, '');
+    setInputText((prev) => (prev.startsWith(`@${clean}`) ? prev : `@${clean} ${prev}`));
+    inputRef.current?.focus();
   };
 
   const pendingRequests = requests.filter((r) => r.status === 'pending');
@@ -386,23 +393,63 @@ export function StudioChatHub({
       {/* ========================================================= */}
       {activeTab === 'chat' && (
         <div className="flex-1 flex flex-col min-h-0 relative">
-          {/* Quick DJ shoutouts bar */}
-          <div className="px-3 py-1.5 bg-black/40 border-b border-white/5 flex items-center gap-1.5 overflow-x-auto scrollbar-none shrink-0">
-            <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider shrink-0 flex items-center gap-1">
-              <Sparkles className="w-3 h-3 text-[#e5b45f]" />
-              Respuesta DJ:
-            </span>
-            {QUICK_DJ_SHOUTOUTS.map((phrase, idx) => (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => handleQuickShoutout(phrase)}
-                className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-[#e5b45f]/20 hover:text-[#e5b45f] border border-white/5 text-[11px] text-gray-300 font-medium whitespace-nowrap transition-colors"
-              >
-                {phrase}
-              </button>
-            ))}
+          {/* Quick DJ shoutouts bar + Clear Chat moderation */}
+          <div className="px-3 py-1.5 bg-black/40 border-b border-white/5 flex items-center justify-between gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none min-w-0">
+              <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider shrink-0 flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-[#e5b45f]" />
+                Rápido:
+              </span>
+              {QUICK_DJ_SHOUTOUTS.map((phrase, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => handleQuickShoutout(phrase)}
+                  className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-[#e5b45f]/20 hover:text-[#e5b45f] border border-white/5 text-[11px] text-gray-300 font-medium whitespace-nowrap transition-colors cursor-pointer"
+                >
+                  {phrase}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={handleClearChatClick}
+              className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all shrink-0 flex items-center gap-1 cursor-pointer ${
+                confirmClearChat
+                  ? 'bg-rose-500 text-white border-rose-400 animate-pulse'
+                  : 'bg-white/5 hover:bg-rose-500/15 text-gray-400 hover:text-rose-400 border-white/10'
+              }`}
+              title="Limpiar mensajes del chat para todos los oyentes"
+            >
+              <Trash2 className="w-3 h-3" />
+              <span>{confirmClearChat ? '¿Confirmar?' : 'Limpiar'}</span>
+            </button>
           </div>
+
+          {/* Pinned Message Banner (DJ can unpin) */}
+          {pinnedMessage && (
+            <div className="px-3.5 py-2 bg-gradient-to-r from-[#e5b45f]/15 via-[#e5b45f]/10 to-transparent border-b border-[#e5b45f]/30 flex items-start justify-between gap-2 shrink-0">
+              <div className="flex items-start gap-2 min-w-0">
+                <Pin className="w-3.5 h-3.5 text-[#e5b45f] shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#e5b45f] block">
+                    Fijado en el chat · {pinnedMessage.user_name}
+                  </span>
+                  <p className="text-xs text-amber-100 leading-snug line-clamp-2 break-words">
+                    {pinnedMessage.text}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => chatStore.pinMessage(null)}
+                className="p-1 rounded-lg text-[#e5b45f]/70 hover:text-white hover:bg-white/10 transition-colors shrink-0 cursor-pointer"
+                title="Quitar mensaje fijado"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
           {/* Messages Feed */}
           <div
@@ -421,15 +468,16 @@ export function StudioChatHub({
             ) : (
               messages.map((msg) => {
                 const isMsgDj = Boolean(msg.is_dj);
+                const isPinned = pinnedMessage?.id === msg.id;
 
                 return (
                   <div
                     key={msg.id}
-                    className={`flex flex-col text-xs transition-all ${
+                    className={`group flex flex-col text-xs transition-all ${
                       isMsgDj ? 'items-end' : 'items-start'
                     }`}
                   >
-                    {/* Header info */}
+                    {/* Header info + DJ Moderation controls */}
                     <div className="flex items-center gap-1.5 mb-1 px-1">
                       {isMsgDj ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#e5b45f]/20 border border-[#e5b45f]/50 text-[#e5b45f] text-[10px] font-extrabold tracking-wider">
@@ -449,6 +497,38 @@ export function StudioChatHub({
                       <span className="text-[10px] text-gray-500 font-mono">
                         {formatMessageTime(msg.created_at)}
                       </span>
+
+                      {/* DJ Moderation Buttons */}
+                      <div className="flex items-center gap-0.5 opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity ml-1">
+                        {!isMsgDj && (
+                          <button
+                            type="button"
+                            onClick={() => handleReplyToUser(msg.user_name)}
+                            className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                            title={`Responder a ${msg.user_name}`}
+                          >
+                            <Reply className="w-3 h-3" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => chatStore.pinMessage(isPinned ? null : msg)}
+                          className={`p-1 rounded hover:bg-white/10 transition-colors cursor-pointer ${
+                            isPinned ? 'text-[#e5b45f]' : 'text-gray-400 hover:text-[#e5b45f]'
+                          }`}
+                          title={isPinned ? 'Quitar fijado' : 'Fijar mensaje arriba para todos'}
+                        >
+                          <Pin className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => chatStore.deleteMessage(msg.id)}
+                          className="p-1 rounded hover:bg-rose-500/20 text-gray-400 hover:text-rose-400 transition-colors cursor-pointer"
+                          title="Borrar mensaje para todos"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
 
                     {/* Bubble */}
@@ -467,6 +547,15 @@ export function StudioChatHub({
             )}
             <div ref={messagesEndRef} />
           </div>
+
+          {/* Typing indicator in studio */}
+          {typingUsers.length > 0 && (
+            <div className="px-4 py-1 bg-black/30 border-t border-white/5 text-[10px] text-[#e5b45f]/90 italic animate-pulse shrink-0">
+              {typingUsers.length === 1
+                ? `${typingUsers[0]} está escribiendo...`
+                : `${typingUsers.length} oyentes están escribiendo...`}
+            </div>
+          )}
 
           {/* Floating Scroll to Bottom Button */}
           {isScrolledUp && (
@@ -496,9 +585,12 @@ export function StudioChatHub({
                 ref={inputRef}
                 type="text"
                 value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
+                onChange={(e) => {
+                  setInputText(e.target.value);
+                  if (e.target.value.trim()) chatStore.sendTyping(true);
+                }}
                 placeholder="Escribe como NEXO DJ al aire..."
-                maxLength={300}
+                maxLength={280}
                 className="w-full pl-3.5 pr-8 py-2 rounded-xl bg-white/5 border border-white/15 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#e5b45f] transition-all"
               />
             </div>
@@ -582,12 +674,12 @@ export function StudioChatHub({
                     {/* Action buttons */}
                     <div className="flex flex-col gap-1.5 shrink-0">
                       <button
-                        onClick={() => handleQueueRequest(req)}
-                        className="px-2.5 py-1.5 rounded-xl bg-[#e5b45f] text-black text-xs font-bold hover:bg-[#f3c87a] transition-all flex items-center gap-1 shadow-sm active:scale-95"
-                        title="Añadir a la cola y marcar como atendida"
+                        onClick={() => handleAnnounceRequest(req)}
+                        className="px-2.5 py-1.5 rounded-xl bg-[#e5b45f] text-black text-xs font-bold hover:bg-[#f3c87a] transition-all flex items-center gap-1 shadow-sm active:scale-95 cursor-pointer"
+                        title="Anunciar esta canción en el chat y marcar como atendida"
                       >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>A la cola</span>
+                        <Megaphone className="w-3.5 h-3.5" />
+                        <span>Anunciar</span>
                       </button>
 
                       {isPending && (

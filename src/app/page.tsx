@@ -30,8 +30,7 @@ export default function NexoRadioPublicPage() {
   const [stationState, setStationState] = useState<StationState>(radioStore.getStationState());
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [mobileTab, setMobileTab] = useState<'home' | 'chat' | 'schedule'>('home');
   const [isDesktopChatVisible, setIsDesktopChatVisible] = useState(true);
   const [desktopPanelTab, setDesktopPanelTab] = useState<'chat' | 'schedule'>('chat');
   const [unreadChatCount, setUnreadChatCount] = useState(0);
@@ -61,6 +60,13 @@ export default function NexoRadioPublicPage() {
     const unsubscribeChat = chatStore.subscribe(updateUnread);
     return () => unsubscribeChat();
   }, []);
+
+  // Clear unread badge when user switches to mobile Chat section
+  useEffect(() => {
+    if (mobileTab === 'chat') {
+      chatStore.clearUnread();
+    }
+  }, [mobileTab]);
 
   const discordInviteUrl = stationState.discord_url || 'https://discord.gg/9AksstuAC';
 
@@ -137,8 +143,13 @@ export default function NexoRadioPublicPage() {
       {isMobileMenuOpen && (
         <div className="lg:hidden p-4 bg-[#0d0f14] border-b border-white/10 space-y-2 animate-in slide-in-from-top-4 duration-200 z-40 relative">
           <button
-            onClick={() => setIsMobileMenuOpen(false)}
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm text-[#e5b45f] bg-[#e5b45f]/15"
+            onClick={() => {
+              setIsMobileMenuOpen(false);
+              setMobileTab('home');
+            }}
+            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm ${
+              mobileTab === 'home' ? 'text-[#e5b45f] bg-[#e5b45f]/15' : 'text-gray-400 hover:text-white'
+            }`}
           >
             <Radio className="w-4 h-4" />
             En vivo
@@ -146,9 +157,11 @@ export default function NexoRadioPublicPage() {
           <button
             onClick={() => {
               setIsMobileMenuOpen(false);
-              setIsScheduleModalOpen(true);
+              setMobileTab('schedule');
             }}
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm text-gray-400 hover:text-white"
+            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm ${
+              mobileTab === 'schedule' ? 'text-[#e5b45f] bg-[#e5b45f]/15' : 'text-gray-400 hover:text-white'
+            }`}
           >
             <Calendar className="w-4 h-4" />
             Programación
@@ -156,9 +169,13 @@ export default function NexoRadioPublicPage() {
           <button
             onClick={() => {
               setIsMobileMenuOpen(false);
-              setIsChatOpen(true);
+              setMobileTab('chat');
             }}
-            className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl font-medium text-sm text-gray-400 hover:text-white hover:bg-white/5 transition-all"
+            className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl font-medium text-sm transition-all ${
+              mobileTab === 'chat'
+                ? 'text-[#e5b45f] bg-[#e5b45f]/15'
+                : 'text-gray-400 hover:text-white hover:bg-white/5'
+            }`}
           >
             <div className="flex items-center gap-3">
               <MessageSquare className="w-4 h-4 text-[#e5b45f]" />
@@ -305,8 +322,12 @@ export default function NexoRadioPublicPage() {
         {/* CENTER STAGE & REORGANIZED RIGHT CHAT HUB */}
         {/* ========================================================= */}
         <div className="flex-1 flex flex-col lg:flex-row min-w-0 h-full overflow-hidden">
-          {/* Main Stage (Vinyl Player, Tagline & Recent Tracks) */}
-          <main className="flex-1 flex flex-col justify-between p-4 sm:p-5 lg:p-6 overflow-y-auto scrollbar-thin">
+          {/* Main Stage (Always mounted so live radio audio NEVER cuts when switching mobile tabs!) */}
+          <main
+            className={`${
+              mobileTab === 'home' ? 'flex' : 'hidden lg:flex'
+            } flex-1 flex-col justify-between p-4 sm:p-5 lg:p-6 overflow-y-auto scrollbar-thin`}
+          >
             {/* Top Stage Tagline & Station Slogan */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2 shrink-0">
               <div>
@@ -330,7 +351,7 @@ export default function NexoRadioPublicPage() {
                   setDesktopPanelTab('schedule');
                   setIsDesktopChatVisible(true);
                   if (typeof window !== 'undefined' && window.innerWidth < 1024) {
-                    setIsScheduleModalOpen(true);
+                    setMobileTab('schedule');
                   }
                 }}
                 className="self-start sm:self-center flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-[#e5b45f]/10 border border-white/10 hover:border-[#e5b45f]/30 transition-all text-left group shrink-0 cursor-pointer"
@@ -388,6 +409,21 @@ export default function NexoRadioPublicPage() {
               </a>
             </div>
           </main>
+
+          {/* ========================================================= */}
+          {/* MOBILE NATIVE FULL-SECTION VIEWS (CHAT & SCHEDULE) */}
+          {/* ========================================================= */}
+          {mobileTab === 'chat' && (
+            <section className="lg:hidden flex-1 flex flex-col min-h-0 overflow-hidden bg-[#0a0c10]/95">
+              <LiveChatView />
+            </section>
+          )}
+
+          {mobileTab === 'schedule' && (
+            <section className="lg:hidden flex-1 flex flex-col min-h-0 overflow-hidden bg-[#0a0c10]/95">
+              <ScheduleView />
+            </section>
+          )}
 
           {/* ========================================================= */}
           {/* RIGHT INTERACTIVE HUB: DESKTOP CHAT & SCHEDULE (FULL HEIGHT) */}
@@ -488,32 +524,35 @@ export default function NexoRadioPublicPage() {
       </div>
 
       {/* Mobile Bottom Navigation Bar */}
-      <nav className="lg:hidden flex items-center justify-around py-3 px-2 glass-panel border-t border-white/10 sticky bottom-0 z-30 shrink-0">
+      <nav className="lg:hidden flex items-center justify-around py-2.5 px-2 glass-panel border-t border-white/10 sticky bottom-0 z-30 shrink-0">
         <button
-          onClick={() => {
-            setIsChatOpen(false);
-            setIsScheduleModalOpen(false);
-          }}
-          className="flex flex-col items-center gap-1 text-[#e5b45f]"
+          onClick={() => setMobileTab('home')}
+          className={`flex flex-col items-center gap-1 transition-colors cursor-pointer ${
+            mobileTab === 'home' ? 'text-[#e5b45f]' : 'text-gray-400 hover:text-white'
+          }`}
         >
           <Radio className="w-5 h-5" />
           <span className="text-[10px] font-medium">Inicio</span>
         </button>
         <button
-          onClick={() => setIsScheduleModalOpen(true)}
-          className="flex flex-col items-center gap-1 text-gray-400 hover:text-[#e5b45f] transition-colors"
+          onClick={() => setMobileTab('schedule')}
+          className={`flex flex-col items-center gap-1 transition-colors cursor-pointer ${
+            mobileTab === 'schedule' ? 'text-[#e5b45f]' : 'text-gray-400 hover:text-white'
+          }`}
         >
           <Calendar className="w-5 h-5" />
           <span className="text-[10px] font-medium">Programación</span>
         </button>
         <button
-          onClick={() => setIsChatOpen(true)}
-          className="relative flex flex-col items-center gap-1 text-gray-400 hover:text-[#e5b45f] transition-colors"
+          onClick={() => setMobileTab('chat')}
+          className={`relative flex flex-col items-center gap-1 transition-colors cursor-pointer ${
+            mobileTab === 'chat' ? 'text-[#e5b45f]' : 'text-gray-400 hover:text-white'
+          }`}
         >
           <div className="relative">
             <MessageSquare className="w-5 h-5" />
-            {unreadChatCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-[#e5b45f] text-black text-[9px] font-bold animate-pulse">
+            {unreadChatCount > 0 && mobileTab !== 'chat' && (
+              <span className="absolute -top-1.5 -right-2 px-1.5 py-0.2 rounded-full bg-[#e5b45f] text-black text-[9px] font-bold animate-pulse">
                 {unreadChatCount}
               </span>
             )}
@@ -532,18 +571,6 @@ export default function NexoRadioPublicPage() {
           <span className="text-[10px] font-medium">Discord</span>
         </a>
       </nav>
-
-      {/* Live Chat Drawer (Mobile / Tablet) */}
-      <LiveChatDrawer
-        isOpen={isChatOpen}
-        onClose={() => setIsChatOpen(false)}
-      />
-
-      {/* Schedule Drawer (Mobile / Tablet) */}
-      <ScheduleDrawer
-        isOpen={isScheduleModalOpen}
-        onClose={() => setIsScheduleModalOpen(false)}
-      />
 
       {/* Song Request Modal */}
       <RequestModal
