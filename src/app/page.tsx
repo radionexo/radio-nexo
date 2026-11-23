@@ -26,6 +26,7 @@ import { LiveChatView, LiveChatDrawer } from '@/components/public/LiveChat';
 import ScheduleView, { ScheduleDrawer } from '@/components/public/ScheduleView';
 import { radioStore } from '@/lib/radioStore';
 import { chatStore } from '@/lib/chatStore';
+import { scheduleStore, ScheduleItem } from '@/lib/scheduleStore';
 import { Song, StationState } from '@/lib/types';
 
 export default function NexoRadioPublicPage() {
@@ -36,7 +37,7 @@ export default function NexoRadioPublicPage() {
   const [isDesktopChatVisible, setIsDesktopChatVisible] = useState(true);
   const [desktopPanelTab, setDesktopPanelTab] = useState<'chat' | 'schedule'>('chat');
   const [unreadChatCount, setUnreadChatCount] = useState(0);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [currentShow, setCurrentShow] = useState<ScheduleItem>(() => scheduleStore.getCurrentShow());
   const [isWelcomeModalOpen, setIsWelcomeModalOpen] = useState(false);
 
   useEffect(() => {
@@ -51,8 +52,15 @@ export default function NexoRadioPublicPage() {
       setStationState(radioStore.getStationState());
     };
     const unsubscribe = radioStore.subscribe(update);
+    const unsubSchedule = scheduleStore.subscribe(() => {
+      setCurrentShow(scheduleStore.getCurrentShow());
+    });
     update();
-    return () => unsubscribe();
+    setCurrentShow(scheduleStore.getCurrentShow());
+    return () => {
+      unsubscribe();
+      unsubSchedule();
+    };
   }, []);
 
   useEffect(() => {
@@ -98,16 +106,24 @@ export default function NexoRadioPublicPage() {
           />
         </div>
 
-        {/* Desktop Search Bar */}
-        <div className="hidden lg:flex items-center relative w-72 xl:w-96">
-          <Search className="w-4 h-4 absolute left-3.5 text-gray-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar canciones, artistas o programas..."
-            className="w-full pl-10 pr-4 py-2 rounded-full bg-white/5 border border-white/10 text-xs text-white placeholder-gray-400 focus:outline-none focus:border-[#e5b45f]/60 transition-colors"
-          />
+        {/* Desktop Live Status Pill (replaces unused search bar) */}
+        <div className="hidden lg:flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-white/[0.04] border border-white/10">
+          <span className="relative flex h-2.5 w-2.5 shrink-0">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-500 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500" />
+          </span>
+          <span className="text-[11px] font-black uppercase tracking-wider text-rose-400">
+            Al Aire
+          </span>
+          <span className="text-white/20">·</span>
+          <span className="text-xs font-semibold text-white truncate max-w-[240px]">
+            {stationState.current_song_title && stationState.current_song_title !== 'Summer Vibes'
+              ? stationState.current_song_title
+              : currentShow.title}
+          </span>
+          <span className="text-[10px] text-[#e5b45f] font-medium hidden xl:inline">
+            ({currentShow.timeSlot})
+          </span>
         </div>
 
         {/* Right Top Header Actions */}
@@ -368,10 +384,10 @@ export default function NexoRadioPublicPage() {
                 <div>
                   <span className="text-[9px] text-[#e5b45f] font-semibold flex items-center gap-1">
                     <Calendar className="w-2.5 h-2.5" />
-                    Al aire · 10:00 – 12:00
+                    Al aire · {currentShow.timeSlot}
                   </span>
                   <h4 className="text-xs font-bold text-white group-hover:text-[#e5b45f] transition-colors truncate max-w-[140px]">
-                    NEXO Morning
+                    {currentShow.title}
                   </h4>
                 </div>
                 <ChevronRight className="w-3 h-3 text-gray-400 group-hover:text-[#e5b45f] transition-transform group-hover:translate-x-0.5" />

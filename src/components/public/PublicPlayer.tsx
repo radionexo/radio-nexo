@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Volume2, Volume1, VolumeX, Music2, Share2, Check, Sparkles } from 'lucide-react';
+import { Play, Pause, Volume2, Volume1, VolumeX, Music2, Share2, Check, Sparkles, Moon } from 'lucide-react';
 import { radioStore } from '@/lib/radioStore';
 import { reactionsBus, ReactionEmoji, LiveReactionEvent } from '@/lib/reactionsBus';
 import { liveInteractiveBus, OnAirDedication } from '@/lib/liveInteractiveBus';
@@ -25,6 +25,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
   const [isIOSDevice, setIsIOSDevice] = useState(false);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
+  const [sleepSecondsLeft, setSleepSecondsLeft] = useState<number | null>(null);
   const [floatingReactions, setFloatingReactions] = useState<LiveReactionEvent[]>([]);
   const [onAirDedication, setOnAirDedication] = useState<OnAirDedication | null>(null);
 
@@ -145,6 +146,45 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
         setTimeout(() => setShareCopied(false), 2500);
       }
     } catch {}
+  };
+
+  // Cycle Sleep Timer: Off -> 15m -> 30m -> 60m -> Off
+  const handleCycleSleepTimer = () => {
+    setSleepSecondsLeft((prev) => {
+      if (prev === null) return 15 * 60;
+      if (prev <= 15 * 60) return 30 * 60;
+      if (prev <= 30 * 60) return 60 * 60;
+      return null;
+    });
+  };
+
+  useEffect(() => {
+    if (sleepSecondsLeft === null) return;
+    if (sleepSecondsLeft <= 0) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+      }
+      setIsPlaying(false);
+      setIsLoading(false);
+      setSleepSecondsLeft(null);
+      setStatusNotice('🌙 Temporizador finalizado. ¡Buenas noches!');
+      try {
+        sessionStorage.setItem(WAS_PLAYING_SESSION_KEY, 'false');
+      } catch {}
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setSleepSecondsLeft((s) => (s !== null ? s - 1 : null));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [sleepSecondsLeft]);
+
+  const formatSleepCountdown = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
   // Sync station state in real-time
@@ -668,6 +708,26 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
               <span>Compartir</span>
             </>
           )}
+        </button>
+
+        {/* Sleep Timer Button (15 / 30 / 60 min) */}
+        <button
+          type="button"
+          onClick={handleCycleSleepTimer}
+          className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[11px] font-semibold transition-all transform active:scale-95 cursor-pointer ${
+            sleepSecondsLeft !== null
+              ? 'border-indigo-400/60 bg-indigo-500/20 text-indigo-200 shadow-sm shadow-indigo-500/20'
+              : 'border-white/15 bg-white/5 hover:bg-white/15 text-gray-300 hover:text-white'
+          }`}
+          title={
+            sleepSecondsLeft !== null
+              ? 'Temporizador activo (toca para cambiar 15 / 30 / 60 min o desactivar)'
+              : 'Temporizador de sueño (apagar la radio automáticamente en 15, 30 o 60 min)'
+          }
+          aria-label="Temporizador de sueño"
+        >
+          <Moon className={`w-3 h-3 ${sleepSecondsLeft !== null ? 'text-indigo-300' : 'text-[#e5b45f]'}`} />
+          <span>{sleepSecondsLeft !== null ? formatSleepCountdown(sleepSecondsLeft) : 'Dormir'}</span>
         </button>
       </div>
 

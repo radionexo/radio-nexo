@@ -1,76 +1,11 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Calendar, Clock, Radio, ChevronRight, Sparkles, User, X } from 'lucide-react';
+import { scheduleStore, ScheduleItem, DEFAULT_SCHEDULE } from '@/lib/scheduleStore';
 
-export interface ScheduleItem {
-  id: string;
-  title: string;
-  timeSlot: string;
-  host: string;
-  description: string;
-  isCurrent?: boolean;
-  coverUrl?: string;
-  tags?: string[];
-}
-
-export const STATION_SCHEDULE: ScheduleItem[] = [
-  {
-    id: 'prog-1',
-    title: 'El Despertador NEXO',
-    timeSlot: '08:00 – 10:00',
-    host: 'DJ Santi & Vale',
-    description: 'Buena vibra, noticias del entretenimiento y los primeros éxitos para arrancar el día.',
-    coverUrl: '/cover_default.webp',
-    tags: ['Mañana', 'Éxitos', 'Variedad'],
-  },
-  {
-    id: 'prog-2',
-    title: 'NEXO Morning',
-    timeSlot: '10:00 – 12:00',
-    host: 'Equipo NEXO',
-    description: 'Tu dosis de energía positiva, pop latino, tendencias virales e interacción en vivo.',
-    isCurrent: true,
-    coverUrl: '/cover_default.webp',
-    tags: ['En vivo', 'Pop Latino', 'Tendencias'],
-  },
-  {
-    id: 'prog-3',
-    title: 'NEXO Hits',
-    timeSlot: '12:00 – 14:00',
-    host: 'DJ Carlos M.',
-    description: 'El ranking de los números 1, los temas más pedidos por la comunidad y estrenos.',
-    coverUrl: '/cover_default.webp',
-    tags: ['Top 40', 'Pedidos', 'Estrenos'],
-  },
-  {
-    id: 'prog-4',
-    title: 'Tarde de Conexión',
-    timeSlot: '14:00 – 17:00',
-    host: 'Andrés V.',
-    description: 'Sesión chill, reggaeton suave, afrobeat y la mejor compañía para tu jornada.',
-    coverUrl: '/cover_default.webp',
-    tags: ['Chill', 'Urbano', 'Afrobeat'],
-  },
-  {
-    id: 'prog-5',
-    title: 'Sunset Beats',
-    timeSlot: '17:00 – 20:00',
-    host: 'DJ Resident',
-    description: 'Deep house, electrónica vocal y ritmos globales para acompañar el atardecer.',
-    coverUrl: '/cover_default.webp',
-    tags: ['House', 'Electro', 'Sunset'],
-  },
-  {
-    id: 'prog-6',
-    title: 'NEXO Club Sessions',
-    timeSlot: '20:00 – 00:00',
-    host: 'DJ Invitado Especial',
-    description: 'Mezclas continuas en directo, cabina abierta y bangers para encender la noche.',
-    coverUrl: '/cover_default.webp',
-    tags: ['Club', 'En Vivo', 'Party'],
-  },
-];
+export type { ScheduleItem };
+export const STATION_SCHEDULE = DEFAULT_SCHEDULE;
 
 interface ScheduleViewProps {
   onClose?: () => void;
@@ -79,6 +14,16 @@ interface ScheduleViewProps {
 }
 
 export default function ScheduleView({ onClose, onSelectProgram, hideHeader = false }: ScheduleViewProps) {
+  const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>(() => scheduleStore.getSchedule());
+
+  useEffect(() => {
+    setScheduleItems(scheduleStore.getSchedule());
+    const unsub = scheduleStore.subscribe(() => {
+      setScheduleItems(scheduleStore.getSchedule());
+    });
+    return () => unsub();
+  }, []);
+
   return (
     <div className="flex flex-col h-full bg-[#0a0c10]/95 backdrop-blur-xl text-white">
       {/* Header */}
@@ -113,7 +58,7 @@ export default function ScheduleView({ onClose, onSelectProgram, hideHeader = fa
 
       {/* Schedule Items List */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin scrollbar-thumb-white/10">
-        {STATION_SCHEDULE.map((item) => (
+        {scheduleItems.map((item) => (
           <div
             key={item.id}
             onClick={() => onSelectProgram?.(item)}

@@ -194,8 +194,8 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
   const navItems: { label: string; href: string; icon: any; match: string[]; disabled?: boolean; onClick?: () => void }[] = [
     { label: 'Cabina', href: '/studio', icon: Mic, match: ['/studio', '/studio/live'] },
     { label: 'Solicitudes', href: '/studio/requests', icon: Inbox, match: ['/studio/requests'] },
-    { label: 'Programación', href: '#', icon: Calendar, match: [], disabled: true },
-    { label: 'Reportes', href: '#', icon: BarChart3, match: [], disabled: true },
+    { label: 'Programación', href: '/studio/schedule', icon: Calendar, match: ['/studio/schedule'] },
+    { label: 'Reportes', href: '/studio/reports', icon: BarChart3, match: ['/studio/reports'] },
     { label: 'Configurar Discord', href: '#', icon: Settings, match: [], onClick: () => setIsDiscordSettingsOpen(true) },
   ];
 
