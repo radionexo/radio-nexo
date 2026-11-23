@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import PublicPlayer from '@/components/public/PublicPlayer';
 import PushNotificationButton from '@/components/public/PushNotificationButton';
+import PushPermissionPrompt from '@/components/public/PushPermissionPrompt';
 import RequestModal from '@/components/public/RequestModal';
 import WelcomeNameModal from '@/components/public/WelcomeNameModal';
 import { LiveChatView, LiveChatDrawer } from '@/components/public/LiveChat';
@@ -587,6 +588,9 @@ export default function NexoRadioPublicPage() {
         isOpen={isWelcomeModalOpen}
         onClose={() => setIsWelcomeModalOpen(false)}
       />
+
+      {/* Push Notifications Permission Popup (shows cleanly once welcome modal closes) */}
+      <PushPermissionPrompt blockedByOtherModal={isWelcomeModalOpen} />
     </div>
   );
 }

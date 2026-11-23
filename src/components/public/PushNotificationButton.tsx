@@ -36,6 +36,10 @@ export default function PushNotificationButton() {
         setIsSubscribed(Boolean(sub));
       })
       .catch(() => {});
+
+    const onExternalSubscribe = () => setIsSubscribed(true);
+    window.addEventListener('nexo_push_subscribed', onExternalSubscribe);
+    return () => window.removeEventListener('nexo_push_subscribed', onExternalSubscribe);
   }, []);
 
   const showToast = (msg: string) => {
