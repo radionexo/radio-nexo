@@ -1,18 +1,15 @@
 -- =========================================================
--- NEXO RADIO V1 - Supabase Database Schema & Setup
+-- NEXO RADIO - Supabase Database Schema (100% Idempotent)
 -- =========================================================
 
--- Enable UUID extension if not enabled
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
--- 1. SONGS TABLE (Biblioteca musical)
+-- 1. SONGS TABLE (Compatibilidad / opcional)
 CREATE TABLE IF NOT EXISTS public.songs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title VARCHAR(255) NOT NULL,
     artist VARCHAR(255) NOT NULL,
     album VARCHAR(255),
     genre VARCHAR(100) DEFAULT 'Pop',
-    duration INTEGER DEFAULT 0, -- in seconds
+    duration INTEGER DEFAULT 0,
     file_url TEXT NOT NULL,
     cover_url TEXT DEFAULT '/cover_default.webp',
     file_size INTEGER DEFAULT 0,
@@ -24,7 +21,7 @@ CREATE TABLE IF NOT EXISTS public.songs (
 
 -- 2. PLAYLISTS TABLE
 CREATE TABLE IF NOT EXISTS public.playlists (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
     description TEXT,
     cover_url TEXT DEFAULT '/cover_default.webp',
@@ -32,9 +29,9 @@ CREATE TABLE IF NOT EXISTS public.playlists (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 3. PLAYLIST_SONGS (Relación N:M ordenada)
+-- 3. PLAYLIST_SONGS
 CREATE TABLE IF NOT EXISTS public.playlist_songs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     playlist_id UUID NOT NULL REFERENCES public.playlists(id) ON DELETE CASCADE,
     song_id UUID NOT NULL REFERENCES public.songs(id) ON DELETE CASCADE,
     position INTEGER DEFAULT 0,
@@ -43,7 +40,7 @@ CREATE TABLE IF NOT EXISTS public.playlist_songs (
 
 -- 4. SONG_REQUESTS TABLE (Solicitudes del público y dedicatorias)
 CREATE TABLE IF NOT EXISTS public.song_requests (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(100) NOT NULL,
     song_title VARCHAR(255) NOT NULL,
     artist VARCHAR(255) NOT NULL,
@@ -52,16 +49,16 @@ CREATE TABLE IF NOT EXISTS public.song_requests (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 5. STATION_STATE TABLE (Estado de la emisora en vivo y canción sonando)
+-- 5. STATION_STATE TABLE (Estado en vivo de la emisora y URL de la antena)
 CREATE TABLE IF NOT EXISTS public.station_state (
     id VARCHAR(50) PRIMARY KEY DEFAULT 'current',
     is_live BOOLEAN DEFAULT false,
     is_mic_active BOOLEAN DEFAULT false,
     current_song_id UUID REFERENCES public.songs(id) ON DELETE SET NULL,
-    current_song_title VARCHAR(255) DEFAULT 'NEXO Stream',
-    current_song_artist VARCHAR(255) DEFAULT 'NEXO RADIO',
+    current_song_title VARCHAR(255) DEFAULT 'DJ EN VIVO',
+    current_song_artist VARCHAR(255) DEFAULT 'Sesión en Directo · Radio Nexo',
     current_song_cover TEXT DEFAULT '/cover_default.webp',
-    current_song_url TEXT DEFAULT '/songs/summer.mp3',
+    current_song_url TEXT DEFAULT '',
     current_song_duration INTEGER DEFAULT 0,
     current_song_progress INTEGER DEFAULT 0,
     listeners_count INTEGER DEFAULT 1,
@@ -70,96 +67,25 @@ CREATE TABLE IF NOT EXISTS public.station_state (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Seed initial station state row
+-- Fila inicial obligatoria 'current'
 INSERT INTO public.station_state (id, is_live, current_song_title, current_song_artist, current_song_cover, current_song_url, listeners_count)
 VALUES ('current', false, 'DJ EN VIVO', 'Sesión en Directo · Radio Nexo', '/cover_default.webp', '', 1)
-ON CONFLICT (id) DO UPDATE SET
-    current_song_title = EXCLUDED.current_song_title,
-    current_song_artist = EXCLUDED.current_song_artist,
-    current_song_cover = EXCLUDED.current_song_cover,
-    current_song_url = EXCLUDED.current_song_url;
-
--- Seed default playlists
-INSERT INTO public.playlists (id, name, description, cover_url)
-VALUES 
-    ('11111111-1111-1111-1111-111111111111', 'Favoritas', 'Las canciones más votadas y especiales de la emisora.', '/cover_default.webp'),
-    ('22222222-2222-2222-2222-222222222222', 'Éxitos del Momento', 'Los hits globales que están sonando en el mundo.', '/cover_default.webp'),
-    ('33333333-3333-3333-3333-333333333333', 'NEXO Morning', 'Tu dosis de buena energía cada mañana.', '/cover_default.webp')
 ON CONFLICT (id) DO NOTHING;
 
--- Row Level Security (RLS)
-ALTER TABLE public.songs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.playlists ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.playlist_songs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.song_requests ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.station_state ENABLE ROW LEVEL SECURITY;
-
--- RLS Policies:
--- 1. Public can read station_state, requests, songs and playlists
-CREATE POLICY "Public read station_state" ON public.station_state FOR SELECT USING (true);
-CREATE POLICY "Public read songs" ON public.songs FOR SELECT USING (true);
-CREATE POLICY "Public read playlists" ON public.playlists FOR SELECT USING (true);
-CREATE POLICY "Public read playlist_songs" ON public.playlist_songs FOR SELECT USING (true);
-
--- 2. Public can insert, read, and cabina manage song requests
-CREATE POLICY "Public read song_requests" ON public.song_requests FOR SELECT USING (true);
-CREATE POLICY "Public insert requests" ON public.song_requests FOR INSERT WITH CHECK (true);
-CREATE POLICY "Public manage song_requests" ON public.song_requests FOR ALL USING (true);
-
--- 3. Studio / Cabina management
-CREATE POLICY "Public manage songs" ON public.songs FOR ALL USING (true);
-CREATE POLICY "Public manage playlists" ON public.playlists FOR ALL USING (true);
-CREATE POLICY "Public manage playlist_songs" ON public.playlist_songs FOR ALL USING (true);
-CREATE POLICY "Public update station_state" ON public.station_state FOR ALL USING (true);
-
--- Enable Supabase Realtime for instant station updates
-ALTER PUBLICATION supabase_realtime ADD TABLE public.station_state;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.song_requests;
-
--- ==============================================================================
--- 6. TABLA DE MENSAJES DE CHAT EN VIVO (OPCIONAL PARA HISTORIAL PERMANENTE)
--- ==============================================================================
+-- 6. CHAT_MESSAGES TABLE (Chat en vivo)
 CREATE TABLE IF NOT EXISTS public.chat_messages (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_name TEXT NOT NULL,
-  user_avatar TEXT,
-  text TEXT NOT NULL,
-  is_dj BOOLEAN DEFAULT FALSE,
-  user_id TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_name TEXT NOT NULL,
+    user_avatar TEXT,
+    text TEXT NOT NULL,
+    is_dj BOOLEAN DEFAULT FALSE,
+    user_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Public read chat_messages" ON public.chat_messages FOR SELECT USING (true);
-CREATE POLICY "Public insert chat_messages" ON public.chat_messages FOR INSERT WITH CHECK (true);
-CREATE POLICY "Public delete chat_messages" ON public.chat_messages FOR DELETE USING (true);
-ALTER PUBLICATION supabase_realtime ADD TABLE public.chat_messages;
-
--- ==============================================================================
--- 7. STORAGE BUCKETS (CANCIONES Y PORTADAS EN SUPABASE)
--- ==============================================================================
-INSERT INTO storage.buckets (id, name, public) 
-VALUES ('songs', 'songs', true) 
-ON CONFLICT (id) DO UPDATE SET public = true;
-
-INSERT INTO storage.buckets (id, name, public) 
-VALUES ('covers', 'covers', true) 
-ON CONFLICT (id) DO UPDATE SET public = true;
-
--- Políticas de Storage (los buckets ya son public = true para lectura/reproducción directa)
-CREATE POLICY "Public Upload Songs" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'songs');
-CREATE POLICY "Public Delete Songs" ON storage.objects FOR DELETE USING (bucket_id = 'songs');
-
-CREATE POLICY "Public Upload Covers" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'covers');
-CREATE POLICY "Public Delete Covers" ON storage.objects FOR DELETE USING (bucket_id = 'covers');
-
-
-
--- ==============================================================================
--- 7. TABLA DE SUSCRIPCIONES PUSH (NOTIFICACIONES PWA)
--- ==============================================================================
+-- 7. PUSH_SUBSCRIPTIONS TABLE (Notificaciones Push PWA)
 CREATE TABLE IF NOT EXISTS public.push_subscriptions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     endpoint TEXT UNIQUE NOT NULL,
     p256dh TEXT NOT NULL,
     auth TEXT NOT NULL,
@@ -169,9 +95,55 @@ CREATE TABLE IF NOT EXISTS public.push_subscriptions (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- =========================================================
+-- ROW LEVEL SECURITY & POLICIES (IDEMPOTENTES)
+-- =========================================================
+ALTER TABLE public.songs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.playlists ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.playlist_songs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.song_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.station_state ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.push_subscriptions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Public manage push_subscriptions"
-ON public.push_subscriptions FOR ALL
-USING (true)
-WITH CHECK (true);
+DROP POLICY IF EXISTS "Public manage songs" ON public.songs;
+CREATE POLICY "Public manage songs" ON public.songs FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public manage playlists" ON public.playlists;
+CREATE POLICY "Public manage playlists" ON public.playlists FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public manage playlist_songs" ON public.playlist_songs;
+CREATE POLICY "Public manage playlist_songs" ON public.playlist_songs FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public manage song_requests" ON public.song_requests;
+CREATE POLICY "Public manage song_requests" ON public.song_requests FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public update station_state" ON public.station_state;
+CREATE POLICY "Public update station_state" ON public.station_state FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public manage chat_messages" ON public.chat_messages;
+CREATE POLICY "Public manage chat_messages" ON public.chat_messages FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public manage push_subscriptions" ON public.push_subscriptions;
+CREATE POLICY "Public manage push_subscriptions" ON public.push_subscriptions FOR ALL USING (true) WITH CHECK (true);
+
+-- =========================================================
+-- REALTIME PUBLICATION (SIN ERRORES SI YA EXISTEN)
+-- =========================================================
+DO $$
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.station_state;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.song_requests;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.chat_messages;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
