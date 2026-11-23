@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Volume2, Volume1, VolumeX, Music2, Share2, Check } from 'lucide-react';
+import { Play, Pause, Volume2, Volume1, VolumeX, Music2, Share2, Check, Sparkles } from 'lucide-react';
 import { radioStore } from '@/lib/radioStore';
 import { reactionsBus, ReactionEmoji, LiveReactionEvent } from '@/lib/reactionsBus';
+import { liveInteractiveBus, OnAirDedication } from '@/lib/liveInteractiveBus';
 import { StationState } from '@/lib/types';
 
 const VOLUME_STORAGE_KEY = 'nexo_listener_volume_v1';
@@ -25,6 +26,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
   const [floatingReactions, setFloatingReactions] = useState<LiveReactionEvent[]>([]);
+  const [onAirDedication, setOnAirDedication] = useState<OnAirDedication | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isPlayingRef = useRef(false);
@@ -44,7 +46,7 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
     }
   }, []);
 
-  // Subscribe to real-time floating reactions from all listeners
+  // Subscribe to real-time floating reactions & on-air dedications
   useEffect(() => {
     const unsub = reactionsBus.subscribe((evt) => {
       setFloatingReactions((prev) => [...prev.slice(-16), evt]);
@@ -52,7 +54,14 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
         setFloatingReactions((prev) => prev.filter((r) => r.id !== evt.id));
       }, 2500);
     });
-    return () => unsub();
+    setOnAirDedication(liveInteractiveBus.getActiveDedication());
+    const unsubInteractive = liveInteractiveBus.subscribe(() => {
+      setOnAirDedication(liveInteractiveBus.getActiveDedication());
+    });
+    return () => {
+      unsub();
+      unsubInteractive();
+    };
   }, []);
 
   // Restore saved volume and muted state from localStorage
@@ -425,6 +434,25 @@ export default function PublicPlayer({ onOpenRequestModal }: PublicPlayerProps) 
           </span>
         ))}
       </div>
+
+      {/* On-Air Highlighted Dedication Banner (Controlled from DJ Studio) */}
+      {onAirDedication && (
+        <div className="mb-2 z-20 w-full max-w-md px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-[#e5b45f]/25 via-[#18140d]/95 to-[#e5b45f]/20 border border-[#e5b45f]/60 shadow-2xl shadow-[#e5b45f]/20 backdrop-blur-xl animate-in fade-in slide-in-from-top-3 duration-300 text-center">
+          <div className="flex items-center justify-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-[#e5b45f] mb-0.5">
+            <Sparkles className="w-3 h-3 animate-pulse" />
+            <span>Dedicatoria al Aire · De {onAirDedication.from}</span>
+            <Sparkles className="w-3 h-3 animate-pulse" />
+          </div>
+          <p className="text-xs font-bold text-white truncate">
+            🎵 {onAirDedication.songTitle} — {onAirDedication.artist}
+          </p>
+          {onAirDedication.message && (
+            <p className="text-[11px] text-amber-100/90 italic mt-0.5 line-clamp-2">
+              &ldquo;{onAirDedication.message}&rdquo;
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Vinyl Aura & Rotating Center Disc */}
       <div className="relative flex items-center justify-center my-2 sm:my-3 group">

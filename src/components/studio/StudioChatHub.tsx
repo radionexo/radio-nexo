@@ -28,8 +28,13 @@ import {
   Trash2,
   Reply,
   Megaphone,
+  Sticker,
+  BarChart2,
+  Tv,
 } from 'lucide-react';
 import { chatStore } from '@/lib/chatStore';
+import { liveInteractiveBus, LivePoll } from '@/lib/liveInteractiveBus';
+import { parseStickerCode, StickerMessage, StickerPicker } from '@/components/chat/ChatStickers';
 import { radioStore } from '@/lib/radioStore';
 import { audioEngine } from '@/lib/audioEngine';
 import { soundEffects } from '@/lib/soundEffects';
@@ -49,6 +54,11 @@ export function StudioChatHub({
   const [activeTab, setActiveTab] = useState<'chat' | 'solicitudes' | 'oyentes'>('chat');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pinnedMessage, setPinnedMessage] = useState<ChatMessage | null>(null);
+  const [activePoll, setActivePoll] = useState<LivePoll | null>(null);
+  const [showPollForm, setShowPollForm] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('¿Qué género suena ahora?');
+  const [pollOptionsInput, setPollOptionsInput] = useState('Salsa, Reggaetón, Vallenato');
+  const [showStickers, setShowStickers] = useState(false);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [confirmClearChat, setConfirmClearChat] = useState(false);
   const [requests, setRequests] = useState<SongRequest[]>([]);
@@ -70,17 +80,21 @@ export function StudioChatHub({
     // 1. Initial data
     setMessages(chatStore.getMessages());
     setPinnedMessage(chatStore.getPinnedMessage());
+    setActivePoll(liveInteractiveBus.getActivePoll());
     setTypingUsers(chatStore.getTypingUsers());
     radioStore.getRequests().then((reqs) => setRequests(reqs));
     setOnlineListeners(radioStore.getOnlineListeners());
     setSoundEnabled(soundEffects.isEnabled());
     setIsMicOnAir(audioEngine.getState().isMicOnAir);
 
-    // 2. Chat store updates
+    // 2. Chat & Interactive store updates
     const unsubChat = chatStore.subscribe(() => {
       setMessages(chatStore.getMessages());
       setPinnedMessage(chatStore.getPinnedMessage());
       setTypingUsers(chatStore.getTypingUsers());
+    });
+    const unsubInteractive = liveInteractiveBus.subscribe(() => {
+      setActivePoll(liveInteractiveBus.getActivePoll());
     });
 
     // 3. Incoming chat sound alert
@@ -118,6 +132,7 @@ export function StudioChatHub({
 
     return () => {
       unsubChat();
+      unsubInteractive();
       unsubChatIncoming();
       unsubReqIncoming();
       unsubEngine();
@@ -218,6 +233,27 @@ export function StudioChatHub({
     const clean = name.replace(/^🎧\s*/, '');
     setInputText((prev) => (prev.startsWith(`@${clean}`) ? prev : `@${clean} ${prev}`));
     inputRef.current?.focus();
+  };
+
+  const handleLaunchPoll = (e: React.FormEvent) => {
+    e.preventDefault();
+    const opts = pollOptionsInput
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!pollQuestion.trim() || opts.length < 2) return;
+    liveInteractiveBus.startPoll(pollQuestion, opts);
+    setShowPollForm(false);
+  };
+
+  const handleSendDjSticker = (code: string) => {
+    chatStore.sendMessage(code, { isDj: true });
+    scrollToBottom(true);
+  };
+
+  const handleShowDedicationOnAir = (req: SongRequest) => {
+    liveInteractiveBus.showDedication(req.name, req.song_title, req.artist, req.dedication);
+    radioStore.updateRequestStatus(req.id, 'reviewed');
   };
 
   const pendingRequests = requests.filter((r) => r.status === 'pending');
@@ -411,20 +447,116 @@ export function StudioChatHub({
                 </button>
               ))}
             </div>
-            <button
-              type="button"
-              onClick={handleClearChatClick}
-              className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all shrink-0 flex items-center gap-1 cursor-pointer ${
-                confirmClearChat
-                  ? 'bg-rose-500 text-white border-rose-400 animate-pulse'
-                  : 'bg-white/5 hover:bg-rose-500/15 text-gray-400 hover:text-rose-400 border-white/10'
-              }`}
-              title="Limpiar mensajes del chat para todos los oyentes"
-            >
-              <Trash2 className="w-3 h-3" />
-              <span>{confirmClearChat ? '¿Confirmar?' : 'Limpiar'}</span>
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowPollForm((prev) => !prev)}
+                className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${
+                  showPollForm || activePoll
+                    ? 'bg-[#e5b45f]/20 text-[#e5b45f] border-[#e5b45f]/40'
+                    : 'bg-white/5 hover:bg-[#e5b45f]/15 text-gray-300 hover:text-[#e5b45f] border-white/10'
+                }`}
+                title="Crear o gestionar encuesta en vivo en el chat"
+              >
+                <BarChart2 className="w-3 h-3" />
+                <span>Encuesta</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleClearChatClick}
+                className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${
+                  confirmClearChat
+                    ? 'bg-rose-500 text-white border-rose-400 animate-pulse'
+                    : 'bg-white/5 hover:bg-rose-500/15 text-gray-400 hover:text-rose-400 border-white/10'
+                }`}
+                title="Limpiar mensajes del chat para todos los oyentes"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>{confirmClearChat ? '¿Confirmar?' : 'Limpiar'}</span>
+              </button>
+            </div>
           </div>
+
+          {/* Live Poll Creator Form (DJ) */}
+          {showPollForm && (
+            <form
+              onSubmit={handleLaunchPoll}
+              className="px-3.5 py-2.5 bg-[#121622] border-b border-[#e5b45f]/30 space-y-2 shrink-0"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-wider text-[#e5b45f] flex items-center gap-1">
+                  <BarChart2 className="w-3 h-3" />
+                  Lanzar Encuesta en Vivo
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowPollForm(false)}
+                  className="text-gray-400 hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <input
+                type="text"
+                value={pollQuestion}
+                onChange={(e) => setPollQuestion(e.target.value)}
+                placeholder="Pregunta (ej. ¿Qué género suena ahora?)"
+                maxLength={120}
+                className="w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white focus:outline-none focus:border-[#e5b45f]"
+              />
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={pollOptionsInput}
+                  onChange={(e) => setPollOptionsInput(e.target.value)}
+                  placeholder="Opciones separadas por coma (ej. Salsa, Reggaetón, Vallenato)"
+                  className="flex-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white focus:outline-none focus:border-[#e5b45f]"
+                />
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 rounded-lg bg-[#e5b45f] hover:bg-[#f3c87a] text-black text-xs font-bold shrink-0 cursor-pointer"
+                >
+                  Publicar
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Active Live Poll Monitor (DJ) */}
+          {activePoll && (() => {
+            const totalVotes = activePoll.options.reduce((acc, o) => acc + o.votes, 0);
+            return (
+              <div className="px-3.5 py-2 bg-[#141824] border-b border-[#e5b45f]/30 space-y-1.5 shrink-0">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#e5b45f] flex items-center gap-1 truncate">
+                    <BarChart2 className="w-3 h-3 shrink-0" />
+                    {activePoll.question} ({totalVotes} votos)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => liveInteractiveBus.endPoll()}
+                    className="px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-[10px] font-bold shrink-0 cursor-pointer"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                  {activePoll.options.map((opt) => {
+                    const pct = totalVotes > 0 ? Math.round((opt.votes / totalVotes) * 100) : 0;
+                    return (
+                      <div
+                        key={opt.id}
+                        className="px-2 py-1 rounded-lg bg-white/5 border border-white/10 flex items-center justify-between text-[10px]"
+                      >
+                        <span className="text-gray-200 truncate">{opt.label}</span>
+                        <span className="font-mono font-bold text-[#e5b45f] ml-1 shrink-0">{pct}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Pinned Message Banner (DJ can unpin) */}
           {pinnedMessage && (
@@ -531,16 +663,24 @@ export function StudioChatHub({
                       </div>
                     </div>
 
-                    {/* Bubble */}
-                    <div
-                      className={`px-3.5 py-2.5 rounded-2xl max-w-[85%] break-words shadow-sm text-sm ${
-                        isMsgDj
-                          ? 'bg-gradient-to-r from-[#e5b45f] to-[#f3c87a] text-black font-semibold rounded-tr-xs shadow-md shadow-[#e5b45f]/20'
-                          : 'bg-white/10 text-gray-100 border border-white/10 rounded-tl-xs hover:border-white/20 transition-colors'
-                      }`}
-                    >
-                      <p className="leading-relaxed select-text">{msg.text}</p>
-                    </div>
+                    {/* Bubble or Sticker */}
+                    {(() => {
+                      const sticker = parseStickerCode(msg.text);
+                      if (sticker) {
+                        return <StickerMessage sticker={sticker} />;
+                      }
+                      return (
+                        <div
+                          className={`px-3.5 py-2.5 rounded-2xl max-w-[85%] break-words shadow-sm text-sm ${
+                            isMsgDj
+                              ? 'bg-gradient-to-r from-[#e5b45f] to-[#f3c87a] text-black font-semibold rounded-tr-xs shadow-md shadow-[#e5b45f]/20'
+                              : 'bg-white/10 text-gray-100 border border-white/10 rounded-tl-xs hover:border-white/20 transition-colors'
+                          }`}
+                        >
+                          <p className="leading-relaxed select-text">{msg.text}</p>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })
@@ -575,11 +715,29 @@ export function StudioChatHub({
             </div>
           )}
 
-          {/* DJ Message Input Form */}
+          {/* DJ Message Input Form + Sticker Picker */}
           <form
             onSubmit={handleSend}
-            className="p-3 border-t border-white/10 bg-black/50 flex items-center gap-2 shrink-0"
+            className="relative p-3 border-t border-white/10 bg-black/50 flex items-center gap-2 shrink-0"
           >
+            {showStickers && (
+              <StickerPicker
+                onSelect={handleSendDjSticker}
+                onClose={() => setShowStickers(false)}
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => setShowStickers((prev) => !prev)}
+              className={`p-2 rounded-xl border transition-all shrink-0 cursor-pointer ${
+                showStickers
+                  ? 'bg-[#e5b45f]/20 border-[#e5b45f]/50 text-[#e5b45f]'
+                  : 'bg-white/5 border-white/10 text-gray-400 hover:text-[#e5b45f]'
+              }`}
+              title="Enviar Sticker Oficial de Radio Nexo"
+            >
+              <Sticker className="w-4 h-4" />
+            </button>
             <div className="relative flex-1">
               <input
                 ref={inputRef}
@@ -674,12 +832,21 @@ export function StudioChatHub({
                     {/* Action buttons */}
                     <div className="flex flex-col gap-1.5 shrink-0">
                       <button
+                        onClick={() => handleShowDedicationOnAir(req)}
+                        className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-[#e5b45f] to-[#f3c87a] text-black text-xs font-bold hover:opacity-95 transition-all flex items-center gap-1 shadow-sm active:scale-95 cursor-pointer"
+                        title="Mostrar esta dedicatoria como banner destacado sobre el reproductor de radionexo.co"
+                      >
+                        <Tv className="w-3.5 h-3.5" />
+                        <span>Al aire</span>
+                      </button>
+
+                      <button
                         onClick={() => handleAnnounceRequest(req)}
-                        className="px-2.5 py-1.5 rounded-xl bg-[#e5b45f] text-black text-xs font-bold hover:bg-[#f3c87a] transition-all flex items-center gap-1 shadow-sm active:scale-95 cursor-pointer"
+                        className="px-2.5 py-1.5 rounded-xl bg-white/10 text-white hover:bg-white/15 text-[11px] font-bold transition-all flex items-center gap-1 active:scale-95 cursor-pointer"
                         title="Anunciar esta canción en el chat y marcar como atendida"
                       >
-                        <Megaphone className="w-3.5 h-3.5" />
-                        <span>Anunciar</span>
+                        <Megaphone className="w-3 h-3 text-[#e5b45f]" />
+                        <span>En chat</span>
                       </button>
 
                       {isPending && (

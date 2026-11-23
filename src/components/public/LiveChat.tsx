@@ -17,8 +17,12 @@ import {
   Reply,
   Bell,
   BellOff,
+  Sticker,
+  BarChart2,
 } from 'lucide-react';
 import { chatStore } from '@/lib/chatStore';
+import { liveInteractiveBus, LivePoll } from '@/lib/liveInteractiveBus';
+import { parseStickerCode, StickerMessage, StickerPicker } from '@/components/chat/ChatStickers';
 import { soundEffects } from '@/lib/soundEffects';
 import { radioStore } from '@/lib/radioStore';
 import { ChatMessage } from '@/lib/types';
@@ -51,6 +55,8 @@ const MAX_CHARS = 280;
 export function LiveChatView({ isDj = false, onClose, hideHeader = false }: LiveChatViewProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pinnedMessage, setPinnedMessage] = useState<ChatMessage | null>(null);
+  const [activePoll, setActivePoll] = useState<LivePoll | null>(null);
+  const [showStickers, setShowStickers] = useState(false);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [inputText, setInputText] = useState('');
   const [sendError, setSendError] = useState('');
@@ -82,10 +88,14 @@ export function LiveChatView({ isDj = false, onClose, hideHeader = false }: Live
     };
 
     sync();
+    setActivePoll(liveInteractiveBus.getActivePoll());
     setCurrentUserId(chatStore.getUserId());
     setSoundEnabled(soundEffects.isEnabled());
 
     const unsubscribe = chatStore.subscribe(sync);
+    const unsubInteractive = liveInteractiveBus.subscribe(() => {
+      setActivePoll(liveInteractiveBus.getActivePoll());
+    });
     const unsubIncoming = chatStore.subscribeIncoming(() => {
       soundEffects.playChatSound(false);
     });
@@ -96,6 +106,7 @@ export function LiveChatView({ isDj = false, onClose, hideHeader = false }: Live
 
     return () => {
       unsubscribe();
+      unsubInteractive();
       unsubIncoming();
       unsubSound();
       clearInterval(tick);
@@ -233,6 +244,21 @@ export function LiveChatView({ isDj = false, onClose, hideHeader = false }: Live
   const handleEmojiClick = (emoji: string) => {
     setInputText((prev) => (prev + emoji).slice(0, MAX_CHARS));
     inputRef.current?.focus();
+  };
+
+  const handleSendSticker = async (stickerCode: string) => {
+    if (!isDj && !chatStore.hasCustomName()) {
+      handleOpenNameModal();
+      return;
+    }
+    setSendError('');
+    try {
+      await chatStore.sendMessage(stickerCode, { isDj });
+      scrollToBottom(true);
+    } catch (err: any) {
+      setSendError(err?.message || 'Espera un segundo antes de enviar otro sticker.');
+      setTimeout(() => setSendError(''), 2200);
+    }
   };
 
   const formatMessageTime = (dateStr: string) => {
@@ -374,6 +400,62 @@ export function LiveChatView({ isDj = false, onClose, hideHeader = false }: Live
         </div>
       )}
 
+      {/* Live Poll Banner (Launched from DJ Studio) */}
+      {activePoll && (() => {
+        const totalVotes = activePoll.options.reduce((acc, o) => acc + o.votes, 0);
+        const myVote = activePoll.voters[currentUserId];
+        return (
+          <div className="px-3.5 py-2.5 bg-gradient-to-r from-[#171b29] via-[#121520] to-[#171b29] border-b border-[#e5b45f]/35 space-y-2 shrink-0">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <BarChart2 className="w-3.5 h-3.5 text-[#e5b45f] shrink-0" />
+                <span className="text-[10px] font-black uppercase tracking-wider text-[#e5b45f]">
+                  Encuesta en Vivo
+                </span>
+              </div>
+              <span className="text-[10px] text-gray-400 font-semibold shrink-0">
+                {totalVotes} {totalVotes === 1 ? 'voto' : 'votos'}
+              </span>
+            </div>
+            <p className="text-xs font-bold text-white leading-snug">{activePoll.question}</p>
+            <div className="space-y-1.5">
+              {activePoll.options.map((opt) => {
+                const pct = totalVotes > 0 ? Math.round((opt.votes / totalVotes) * 100) : 0;
+                const isSelected = myVote === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => liveInteractiveBus.votePoll(activePoll.id, opt.id, currentUserId)}
+                    className={`relative w-full overflow-hidden rounded-xl border px-2.5 py-1.5 text-left transition-all cursor-pointer ${
+                      isSelected
+                        ? 'border-[#e5b45f] bg-[#e5b45f]/15'
+                        : 'border-white/10 bg-white/5 hover:border-white/25'
+                    }`}
+                  >
+                    <div
+                      className={`absolute inset-y-0 left-0 transition-all duration-300 ${
+                        isSelected ? 'bg-[#e5b45f]/25' : 'bg-white/10'
+                      }`}
+                      style={{ width: `${pct}%` }}
+                    />
+                    <div className="relative z-10 flex items-center justify-between gap-2 text-[11px]">
+                      <span className={`font-semibold truncate ${isSelected ? 'text-[#e5b45f]' : 'text-gray-100'}`}>
+                        {isSelected ? '✓ ' : ''}
+                        {opt.label}
+                      </span>
+                      <span className="font-mono font-bold text-[10px] text-gray-300 shrink-0">
+                        {pct}%
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Message Feed */}
       <div
         ref={scrollContainerRef}
@@ -436,18 +518,26 @@ export function LiveChatView({ isDj = false, onClose, hideHeader = false }: Live
                   )}
                 </div>
 
-                {/* Message Bubble */}
-                <div
-                  className={`px-3 py-2 rounded-2xl max-w-[85%] break-words select-text ${
-                    isMsgDj
-                      ? 'bg-gradient-to-r from-[#e5b45f]/20 to-[#f3c87a]/10 border border-[#e5b45f]/40 text-amber-100 shadow-sm shadow-[#e5b45f]/10 rounded-tl-sm'
-                      : isMe
-                      ? 'bg-[#e5b45f] text-black font-medium rounded-tr-sm shadow-md'
-                      : 'bg-white/10 text-gray-200 border border-white/5 rounded-tl-sm'
-                  }`}
-                >
-                  <p className="leading-relaxed">{msg.text}</p>
-                </div>
+                {/* Message Bubble or Sticker */}
+                {(() => {
+                  const sticker = parseStickerCode(msg.text);
+                  if (sticker) {
+                    return <StickerMessage sticker={sticker} />;
+                  }
+                  return (
+                    <div
+                      className={`px-3 py-2 rounded-2xl max-w-[85%] break-words select-text ${
+                        isMsgDj
+                          ? 'bg-gradient-to-r from-[#e5b45f]/20 to-[#f3c87a]/10 border border-[#e5b45f]/40 text-amber-100 shadow-sm shadow-[#e5b45f]/10 rounded-tl-sm'
+                          : isMe
+                          ? 'bg-[#e5b45f] text-black font-medium rounded-tr-sm shadow-md'
+                          : 'bg-white/10 text-gray-200 border border-white/5 rounded-tl-sm'
+                      }`}
+                    >
+                      <p className="leading-relaxed">{msg.text}</p>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })
@@ -502,11 +592,29 @@ export function LiveChatView({ isDj = false, onClose, hideHeader = false }: Live
         ))}
       </div>
 
-      {/* Input Bar */}
+      {/* Input Bar + Sticker Picker */}
       <form
         onSubmit={handleSend}
-        className="p-2.5 sm:p-3 border-t border-white/10 bg-black/40 flex items-center gap-2 shrink-0"
+        className="relative p-2.5 sm:p-3 border-t border-white/10 bg-black/40 flex items-center gap-2 shrink-0"
       >
+        {showStickers && (
+          <StickerPicker
+            onSelect={handleSendSticker}
+            onClose={() => setShowStickers(false)}
+          />
+        )}
+        <button
+          type="button"
+          onClick={() => setShowStickers((prev) => !prev)}
+          className={`p-2 rounded-xl border transition-all shrink-0 cursor-pointer ${
+            showStickers
+              ? 'bg-[#e5b45f]/20 border-[#e5b45f]/50 text-[#e5b45f]'
+              : 'bg-white/5 border-white/10 text-gray-400 hover:text-[#e5b45f] hover:border-[#e5b45f]/30'
+          }`}
+          title="Stickers de Radio Nexo"
+        >
+          <Sticker className="w-4 h-4" />
+        </button>
         <div className="relative flex-1">
           <input
             ref={inputRef}
