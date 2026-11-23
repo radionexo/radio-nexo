@@ -14,7 +14,7 @@ function getSupabaseServerClient() {
 export async function POST(request: Request) {
   const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
   const privateKey = process.env.VAPID_PRIVATE_KEY;
-  const subject = process.env.VAPID_SUBJECT || 'mailto:contacto@radionexo.co';
+  const subject = process.env.VAPID_SUBJECT || 'mailto:radionexo.co@gmail.com';
 
   if (!publicKey || !privateKey) {
     return NextResponse.json(
