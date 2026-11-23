@@ -33,6 +33,7 @@ import {
   Tv,
 } from 'lucide-react';
 import { chatStore } from '@/lib/chatStore';
+import { buildUserMessageCounts, getUserBadge } from '@/lib/chatBadges';
 import { liveInteractiveBus, LivePoll } from '@/lib/liveInteractiveBus';
 import { parseStickerCode, StickerMessage, StickerPicker } from '@/components/chat/ChatStickers';
 import { radioStore } from '@/lib/radioStore';
@@ -257,6 +258,7 @@ export function StudioChatHub({
   };
 
   const pendingRequests = requests.filter((r) => r.status === 'pending');
+  const userMessageCounts = React.useMemo(() => buildUserMessageCounts(messages), [messages]);
 
   const formatMessageTime = (dateStr: string) => {
     try {
@@ -324,38 +326,34 @@ export function StudioChatHub({
           {/* Tabs */}
           <button
             onClick={() => setActiveTab('chat')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
-              activeTab === 'chat'
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${activeTab === 'chat'
                 ? 'bg-[#e5b45f] text-black shadow-md shadow-[#e5b45f]/25'
                 : 'text-gray-400 hover:text-white hover:bg-white/5'
-            }`}
+              }`}
           >
             <MessageSquare className="w-3.5 h-3.5" />
             <span>Chat Cabina</span>
             <span
-              className={`w-2 h-2 rounded-full ${
-                activeTab === 'chat' ? 'bg-black' : 'bg-emerald-400 animate-pulse'
-              }`}
+              className={`w-2 h-2 rounded-full ${activeTab === 'chat' ? 'bg-black' : 'bg-emerald-400 animate-pulse'
+                }`}
             />
           </button>
 
           <button
             onClick={() => setActiveTab('solicitudes')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all relative ${
-              activeTab === 'solicitudes'
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all relative ${activeTab === 'solicitudes'
                 ? 'bg-[#e5b45f] text-black shadow-md shadow-[#e5b45f]/25'
                 : 'text-gray-400 hover:text-white hover:bg-white/5'
-            }`}
+              }`}
           >
             <Music2 className="w-3.5 h-3.5" />
             <span>Solicitudes</span>
             {pendingRequests.length > 0 && (
               <span
-                className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-                  activeTab === 'solicitudes'
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${activeTab === 'solicitudes'
                     ? 'bg-black text-[#e5b45f]'
                     : 'bg-rose-500 text-white animate-pulse'
-                }`}
+                  }`}
               >
                 {pendingRequests.length}
               </span>
@@ -364,20 +362,18 @@ export function StudioChatHub({
 
           <button
             onClick={() => setActiveTab('oyentes')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all relative ${
-              activeTab === 'oyentes'
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all relative ${activeTab === 'oyentes'
                 ? 'bg-[#e5b45f] text-black shadow-md shadow-[#e5b45f]/25'
                 : 'text-gray-400 hover:text-white hover:bg-white/5'
-            }`}
+              }`}
           >
             <Users className="w-3.5 h-3.5" />
             <span>Oyentes</span>
             <span
-              className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-                activeTab === 'oyentes'
+              className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${activeTab === 'oyentes'
                   ? 'bg-black text-[#e5b45f]'
                   : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-              }`}
+                }`}
             >
               {onlineListeners.length}
             </span>
@@ -398,11 +394,10 @@ export function StudioChatHub({
 
           <button
             onClick={handleToggleSound}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all ${
-              soundEnabled
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all ${soundEnabled
                 ? 'bg-white/5 hover:bg-white/10 text-emerald-400 border-emerald-500/30'
                 : 'bg-white/5 hover:bg-white/10 text-gray-400 border-white/5'
-            }`}
+              }`}
             title={
               soundEnabled
                 ? 'Sonidos activados (suena al recibir chats y solicitudes)'
@@ -451,11 +446,10 @@ export function StudioChatHub({
               <button
                 type="button"
                 onClick={() => setShowPollForm((prev) => !prev)}
-                className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${
-                  showPollForm || activePoll
+                className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${showPollForm || activePoll
                     ? 'bg-[#e5b45f]/20 text-[#e5b45f] border-[#e5b45f]/40'
                     : 'bg-white/5 hover:bg-[#e5b45f]/15 text-gray-300 hover:text-[#e5b45f] border-white/10'
-                }`}
+                  }`}
                 title="Crear o gestionar encuesta en vivo en el chat"
               >
                 <BarChart2 className="w-3 h-3" />
@@ -464,11 +458,10 @@ export function StudioChatHub({
               <button
                 type="button"
                 onClick={handleClearChatClick}
-                className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${
-                  confirmClearChat
+                className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${confirmClearChat
                     ? 'bg-rose-500 text-white border-rose-400 animate-pulse'
                     : 'bg-white/5 hover:bg-rose-500/15 text-gray-400 hover:text-rose-400 border-white/10'
-                }`}
+                  }`}
                 title="Limpiar mensajes del chat para todos los oyentes"
               >
                 <Trash2 className="w-3 h-3" />
@@ -605,9 +598,8 @@ export function StudioChatHub({
                 return (
                   <div
                     key={msg.id}
-                    className={`group flex flex-col text-xs transition-all ${
-                      isMsgDj ? 'items-end' : 'items-start'
-                    }`}
+                    className={`group flex flex-col text-xs transition-all ${isMsgDj ? 'items-end' : 'items-start'
+                      }`}
                   >
                     {/* Header info + DJ Moderation controls */}
                     <div className="flex items-center gap-1.5 mb-1 px-1">
@@ -617,13 +609,25 @@ export function StudioChatHub({
                           {msg.user_name} (Tú)
                         </span>
                       ) : (
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <div className="w-4 h-4 rounded-full bg-white/10 flex items-center justify-center text-gray-400 text-[10px]">
                             <User className="w-2.5 h-2.5" />
                           </div>
                           <span className="font-bold text-xs text-white">
                             {msg.user_name}
                           </span>
+                          {(() => {
+                            const msgBadge = getUserBadge(msg.user_name, userMessageCounts);
+                            if (msgBadge.tier === 'new') return null;
+                            return (
+                              <span
+                                className={`inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full border text-[9px] font-black ${msgBadge.className}`}
+                              >
+                                <span>{msgBadge.emoji}</span>
+                                <span>{msgBadge.label}</span>
+                              </span>
+                            );
+                          })()}
                         </div>
                       )}
                       <span className="text-[10px] text-gray-500 font-mono">
@@ -645,9 +649,8 @@ export function StudioChatHub({
                         <button
                           type="button"
                           onClick={() => chatStore.pinMessage(isPinned ? null : msg)}
-                          className={`p-1 rounded hover:bg-white/10 transition-colors cursor-pointer ${
-                            isPinned ? 'text-[#e5b45f]' : 'text-gray-400 hover:text-[#e5b45f]'
-                          }`}
+                          className={`p-1 rounded hover:bg-white/10 transition-colors cursor-pointer ${isPinned ? 'text-[#e5b45f]' : 'text-gray-400 hover:text-[#e5b45f]'
+                            }`}
                           title={isPinned ? 'Quitar fijado' : 'Fijar mensaje arriba para todos'}
                         >
                           <Pin className="w-3 h-3" />
@@ -671,11 +674,10 @@ export function StudioChatHub({
                       }
                       return (
                         <div
-                          className={`px-3.5 py-2.5 rounded-2xl max-w-[85%] break-words shadow-sm text-sm ${
-                            isMsgDj
+                          className={`px-3.5 py-2.5 rounded-2xl max-w-[85%] break-words shadow-sm text-sm ${isMsgDj
                               ? 'bg-gradient-to-r from-[#e5b45f] to-[#f3c87a] text-black font-semibold rounded-tr-xs shadow-md shadow-[#e5b45f]/20'
                               : 'bg-white/10 text-gray-100 border border-white/10 rounded-tl-xs hover:border-white/20 transition-colors'
-                          }`}
+                            }`}
                         >
                           <p className="leading-relaxed select-text">{msg.text}</p>
                         </div>
@@ -729,11 +731,10 @@ export function StudioChatHub({
             <button
               type="button"
               onClick={() => setShowStickers((prev) => !prev)}
-              className={`p-2 rounded-xl border transition-all shrink-0 cursor-pointer ${
-                showStickers
+              className={`p-2 rounded-xl border transition-all shrink-0 cursor-pointer ${showStickers
                   ? 'bg-[#e5b45f]/20 border-[#e5b45f]/50 text-[#e5b45f]'
                   : 'bg-white/5 border-white/10 text-gray-400 hover:text-[#e5b45f]'
-              }`}
+                }`}
               title="Enviar Sticker Oficial de Radio Nexo"
             >
               <Sticker className="w-4 h-4" />
@@ -784,11 +785,10 @@ export function StudioChatHub({
               return (
                 <div
                   key={req.id}
-                  className={`p-3.5 rounded-2xl border transition-all ${
-                    isPending
+                  className={`p-3.5 rounded-2xl border transition-all ${isPending
                       ? 'bg-gradient-to-r from-amber-500/10 via-white/5 to-transparent border-[#e5b45f]/40 shadow-md'
                       : 'bg-white/5 border-white/5 opacity-70 hover:opacity-100'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">

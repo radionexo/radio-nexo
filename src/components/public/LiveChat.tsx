@@ -19,8 +19,10 @@ import {
   BellOff,
   Sticker,
   BarChart2,
+  Trophy,
 } from 'lucide-react';
 import { chatStore } from '@/lib/chatStore';
+import { buildUserMessageCounts, getUserBadge, getTopChatters } from '@/lib/chatBadges';
 import { liveInteractiveBus, LivePoll } from '@/lib/liveInteractiveBus';
 import { parseStickerCode, StickerMessage, StickerPicker } from '@/components/chat/ChatStickers';
 import { soundEffects } from '@/lib/soundEffects';
@@ -57,6 +59,7 @@ export function LiveChatView({ isDj = false, onClose, hideHeader = false }: Live
   const [pinnedMessage, setPinnedMessage] = useState<ChatMessage | null>(null);
   const [activePoll, setActivePoll] = useState<LivePoll | null>(null);
   const [showStickers, setShowStickers] = useState(false);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [inputText, setInputText] = useState('');
   const [sendError, setSendError] = useState('');
@@ -274,6 +277,11 @@ export function LiveChatView({ isDj = false, onClose, hideHeader = false }: Live
     }
   };
 
+  const userMessageCounts = React.useMemo(() => buildUserMessageCounts(messages), [messages]);
+  const topChatters = React.useMemo(() => getTopChatters(messages, 3), [messages]);
+  const myMsgCount = userMessageCounts.get((userName || '').trim().toLowerCase()) || 0;
+  const myBadge = getUserBadge(userName, userMessageCounts);
+
   const typingLabel =
     typingUsers.length === 1
       ? `${typingUsers[0]} está escribiendo...`
@@ -348,16 +356,38 @@ export function LiveChatView({ isDj = false, onClose, hideHeader = false }: Live
         </div>
       )}
 
-      {/* User Nickname Banner */}
+      {/* User Nickname Banner + Top Ranking Toggle */}
       {!isDj && (
-        <div className="px-4 py-1.5 bg-white/[0.02] border-b border-white/5 flex items-center justify-between text-xs shrink-0">
+        <div className="px-4 py-1.5 bg-white/[0.02] border-b border-white/5 flex items-center justify-between text-xs shrink-0 gap-2">
           <div className="flex items-center gap-1.5 text-gray-300 min-w-0">
-            <span className="text-[11px] text-gray-400 shrink-0">Chateando como:</span>
-            <span className="font-semibold text-[#e5b45f] truncate max-w-[140px]">
+            <span className="text-[11px] text-gray-400 shrink-0 hidden sm:inline">Chateando como:</span>
+            <span className="font-semibold text-[#e5b45f] truncate max-w-[110px]">
               {userName}
             </span>
+            {myBadge.tier !== 'new' && (
+              <span
+                className={`inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full border text-[9px] font-black shrink-0 ${myBadge.className}`}
+                title={`Tu nivel actual (${myMsgCount} mensajes)`}
+              >
+                <span>{myBadge.emoji}</span>
+                <span>{myBadge.label}</span>
+              </span>
+            )}
           </div>
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowLeaderboard((prev) => !prev)}
+              className={`flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md border transition-colors cursor-pointer ${
+                showLeaderboard
+                  ? 'bg-[#e5b45f]/20 border-[#e5b45f]/40 text-[#e5b45f]'
+                  : 'bg-white/5 border-white/10 text-gray-300 hover:text-[#e5b45f]'
+              }`}
+              title="Ver Top Oyentes y tu progreso de insignias"
+            >
+              <Trophy className="w-3 h-3 text-[#e5b45f]" />
+              <span>Top</span>
+            </button>
             {hideHeader && (
               <button
                 type="button"
@@ -373,13 +403,51 @@ export function LiveChatView({ isDj = false, onClose, hideHeader = false }: Live
             <button
               type="button"
               onClick={handleOpenNameModal}
-              className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-[#e5b45f] px-2 py-0.5 rounded-md hover:bg-white/5 transition-colors cursor-pointer"
+              className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-[#e5b45f] px-1.5 py-0.5 rounded-md hover:bg-white/5 transition-colors cursor-pointer"
               title="Cambiar tu nombre o apodo"
             >
               <Edit2 className="w-3 h-3" />
-              <span>Cambiar</span>
+              <span className="hidden sm:inline">Cambiar</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Expandable Top Oyentes Leaderboard & Personal Rank Progress */}
+      {!isDj && showLeaderboard && (
+        <div className="px-3.5 py-2.5 bg-gradient-to-r from-[#151824] via-[#10131c] to-[#151824] border-b border-[#e5b45f]/25 space-y-2 shrink-0 animate-in fade-in slide-in-from-top-1 duration-150">
+          <div className="flex items-center justify-between text-[10px]">
+            <span className="font-black uppercase tracking-wider text-[#e5b45f] flex items-center gap-1">
+              <Trophy className="w-3 h-3" />
+              Top Oyentes en el Chat
+            </span>
+            <span className="text-gray-400">
+              {myBadge.nextTierMin
+                ? `Faltan ${Math.max(1, myBadge.nextTierMin - myMsgCount)} msgs para ${myBadge.nextTierLabel}`
+                : '¡Nivel máximo alcanzado! 👑'}
+            </span>
+          </div>
+
+          {topChatters.length === 0 ? (
+            <p className="text-[11px] text-gray-500">Envía mensajes para entrar al ranking del show.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+              {topChatters.map((chatter, idx) => (
+                <div
+                  key={chatter.userName}
+                  className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[11px]"
+                >
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="font-black text-[#e5b45f]">#{idx + 1}</span>
+                    <span className="font-semibold text-white truncate">{chatter.userName}</span>
+                  </div>
+                  <span className="text-[10px] font-mono text-gray-400 shrink-0 ml-1">
+                    {chatter.badge.emoji} {chatter.count}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -478,6 +546,7 @@ export function LiveChatView({ isDj = false, onClose, hideHeader = false }: Live
           messages.map((msg) => {
             const isMe = msg.user_id === currentUserId;
             const isMsgDj = Boolean(msg.is_dj);
+            const msgBadge = !isMsgDj ? getUserBadge(msg.user_name, userMessageCounts) : null;
 
             return (
               <div
@@ -487,21 +556,31 @@ export function LiveChatView({ isDj = false, onClose, hideHeader = false }: Live
                 }`}
               >
                 {/* Sender info */}
-                <div className="flex items-center gap-1.5 mb-0.5 px-1">
+                <div className="flex items-center gap-1.5 mb-0.5 px-1 flex-wrap">
                   {isMsgDj ? (
                     <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-md bg-[#e5b45f]/20 border border-[#e5b45f]/40 text-[#e5b45f] text-[10px] font-bold tracking-wide">
                       <ShieldCheck className="w-3 h-3" />
                       {msg.user_name}
                     </span>
                   ) : (
-                    <span
-                      className={`font-semibold text-[11px] ${
-                        isMe ? 'text-[#e5b45f]' : 'text-gray-300'
-                      }`}
-                    >
-                      {msg.user_name}{' '}
-                      {isMe && <span className="text-[10px] text-gray-400">(Tú)</span>}
-                    </span>
+                    <>
+                      <span
+                        className={`font-semibold text-[11px] ${
+                          isMe ? 'text-[#e5b45f]' : 'text-gray-300'
+                        }`}
+                      >
+                        {msg.user_name}{' '}
+                        {isMe && <span className="text-[10px] text-gray-400">(Tú)</span>}
+                      </span>
+                      {msgBadge && msgBadge.tier !== 'new' && (
+                        <span
+                          className={`inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full border text-[9px] font-black ${msgBadge.className}`}
+                        >
+                          <span>{msgBadge.emoji}</span>
+                          <span>{msgBadge.label}</span>
+                        </span>
+                      )}
+                    </>
                   )}
                   <span className="text-[10px] text-gray-500">
                     {formatMessageTime(msg.created_at)}
